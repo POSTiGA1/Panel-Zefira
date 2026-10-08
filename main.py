@@ -5614,6 +5614,49 @@ def api_blocklist_porn(data: BlockToggleIn, request: Request, admin: Admin = Dep
     return {"porn_enabled": data.porn_enabled}
 
 
+def _tg_hint(desc: str, chat: str) -> str:
+    """Telegram's own description, plus what to do about this one.
+
+    `chat not found` is one description for four unrelated mistakes, and the
+    most common - the token was changed after the chat id was recorded, so the
+    id belongs to a different bot - is the one an operator never suspects. The
+    panel cannot resolve it: only the bot that can see the chat can send to it.
+    """
+    d = (desc or "").lower()
+    if "chat not found" in d:
+        if chat.startswith("@"):
+            return ("Telegram does not know that channel - or this bot is not "
+                    "an admin of it. Add the bot as an admin, or use a numeric "
+                    "group/channel id.")
+        if chat.lstrip("-").isdigit() and not chat.startswith("-"):
+            return ("That looks like a USER id, not a group. A bot cannot message "
+                    "a user who has never sent /start to it: ask them to open the "
+                    "bot and press Start once.")
+        return ("Telegram does not know that chat for THIS bot. Either the chat "
+                "id belongs to a different bot (the usual cause: the token was "
+                "changed after the chat id was saved), or the id is wrong, or the "
+                "chat was deleted. Get a fresh chat id from the same bot.")
+    if "not a member of the channel chat" in d:
+        return ("The bot is not in that chat. Add it to the group, or give it "
+                "admin rights on the channel.")
+    if "not enough rights" in d:
+        return ("The bot lacks the rights it needs in that chat. Make it an "
+                "admin with permission to post.")
+    if "blocked by the user" in d:
+        return "That user has blocked the bot. Ask them to unblock it."
+    if "user is deactivated" in d or "user_deactivated" in d:
+        return "That account is deleted on Telegram's side. Create a new one."
+    if "bot can't initiate conversation" in d:
+        return ("A bot cannot open a conversation with a user who never started "
+                "it. Ask them to press /start in the bot first.")
+    if "too many requests" in d or "retry after" in d:
+        return "Telegram is rate-limiting this bot. Wait a minute and retry."
+    if "bot was blocked" in d:
+        return "The bot cannot reach that chat. Check it has not been blocked."
+    return ""
+
+
+
 @app.get("/api/telegram")
 def api_telegram_get(admin: Admin = Depends(require_admin)):
     return {
@@ -5682,7 +5725,9 @@ def api_telegram_test(data: TelegramTestIn, request: Request, admin: Admin = Dep
             body = getattr(exc, "read", lambda: b"")() or b""
             desc = (_json.loads(body.decode("utf-8", "replace")) or {}).get("description", "")
             if desc:
-                err = f"{err} — {str(desc)[:120]}"
+                _hint = _tg_hint(str(desc), str(chat))
+                err = (f"{err} — {str(desc)[:120]}"
+                       + (f" | {_hint}" if _hint else ""))
         except Exception:
             pass
     with db.s() as s:

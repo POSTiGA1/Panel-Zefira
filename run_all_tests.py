@@ -81,6 +81,8 @@ OFFLINE_SUITES = [
     # a number, an address or a code fence is worse than none, because the reader
     # cannot tell which part to trust.
     ("readme_i18n_test.py", "README translations"),
+    # Telegram returns one description for four unrelated mistakes, and "chat not\n    # found" was passed through verbatim. Pure string mapping, offline.
+    ("telegram_hint_test.py", "telegram error hints"),
     ("i18n_test.py", "docs i18n dictionaries"),
     # Reads the route table out of main.py, the sidebar out of app.js and the
     # setting keys out of protocols.py, then requires a real mention in the
