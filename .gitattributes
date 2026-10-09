@@ -1,0 +1,19 @@
+# A shell script must reach the server with LF endings. `install.sh` is piped
+# to `bash` by the documented one-liner, so a stray CR turns a command into
+# "command\r" and bash reports `command not found` - which is exactly the
+# unexplained `/tmp/inst.sh: line 698: +: command not found` seen on a real
+# Ubuntu host during testing.
+#
+# This repository had core.autocrlf=true and no .gitattributes, so a CRLF
+# checkout was silently produced here and then committed. Pin the text files
+# that are executed or hashed to LF regardless of the developer's platform,
+# and stop git from rewriting them on the way back in.
+* text=auto eol=lf
+
+*.sh    text eol=lf
+*.py    text eol=lf
+*.js    text eol=lf
+*.html  text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+VERSION text eol=lf

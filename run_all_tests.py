@@ -83,6 +83,10 @@ OFFLINE_SUITES = [
     ("readme_i18n_test.py", "README translations"),
     # Telegram returns one description for four unrelated mistakes, and "chat not\n    # found" was passed through verbatim. Pure string mapping, offline.
     ("telegram_hint_test.py", "telegram error hints"),
+    # The docs promise a least-privilege `bot` token that the create form could
+    # not produce, so every token an operator minted was a `full` credential.
+    # Each assertion is checked against a mutated copy of the real files too.
+    ("api_scope_test.py", "API token scope control"),
     ("i18n_test.py", "docs i18n dictionaries"),
     # Reads the route table out of main.py, the sidebar out of app.js and the
     # setting keys out of protocols.py, then requires a real mention in the

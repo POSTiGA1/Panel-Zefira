@@ -1814,6 +1814,12 @@ bind("#snode-create-btn", "click", async (e) => {
 bind("#snodes-list", "click", async (e) => {
   const btn = e.target.closest(".row-btn");
   if (!btn) return;
+  // Same one-in-flight rule as the sibling list handlers. Without it a
+  // double-click fires two PATCHes and two `check` probes, and the audit log
+  // - the record an operator reads after an incident - grows a duplicate row
+  // per click. The final state is still correct, because both clicks read the
+  // same cached row and compute the same target; the damage is the log.
+  if (!guardBtn(btn)) return;
   const id = btn.dataset.id;
   try {
     if (btn.dataset.act === "check") {
@@ -1836,6 +1842,7 @@ bind("#snodes-list", "click", async (e) => {
       loadSrvNodes();
     }
   } catch (err) { if (err.message !== "auth") toast(err.message, false); }
+  finally { btn.disabled = false; }
 });
 bind("#snodes-refresh", "click", loadSrvNodes);
 
@@ -2405,8 +2412,17 @@ bind("#apitoken-create-btn", "click", async (e) => {
   if (!pw) return;
   if (!guardBtn(btn)) return;
   try {
+    // The scope selector is a security control, not a convenience: `full` can
+    // delete users, restore backups and change settings, so it must be chosen
+    // deliberately rather than inherited from a schema default the operator
+    // never sees. Fall back to "full" only when the control is somehow absent,
+    // and validate here so a tampered value can never widen the scope: the
+    // server coerces anything unknown to "full" too, but then the operator
+    // would get a full token while believing they chose otherwise.
+    const scopeSel = $("#apitoken-scope");
+    const scope = (scopeSel && (scopeSel.value === "bot" || scopeSel.value === "full")) ? scopeSel.value : "full";
     const r = await api("/api/api-tokens", { method: "POST",
-                                           body: { name, password_confirm: pw } });
+                                             body: { name, password_confirm: pw, scopes: scope } });
     $("#apitoken-name").value = "";
     // Test it first: a token that does not authenticate is a problem the
     // operator should hear about now, not after pasting it into a bot.

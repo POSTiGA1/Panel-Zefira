@@ -394,6 +394,7 @@
           <p class="hint mt-0"><span data-i18n="tokens.hintA">Long-lived</span> <code>zfp_…</code> <span data-i18n="tokens.hintB">tokens for bots and dashboards. Send as</span> <code>Authorization: Bearer …</code> <span data-i18n="tokens.hintC">header — no CSRF header needed. Shown once, revoke anytime.</span></p>
           <div class="field-row">
             <label class="field"><span data-i18n="tokens.nameLabel">Token name</span><input type="text" id="apitoken-name" maxlength="40" placeholder="telegram-bot"></label>
+            <label class="field"><span data-i18n="tokens.scopeLabel">Scope</span><select id="apitoken-scope"><option value="full" data-i18n="tokens.scopeFull">Full (everything)</option><option value="bot" data-i18n="tokens.scopeBot">Bot (least privilege)</option></select></label>
             <div class="field"><span>&nbsp;</span><button type="button" id="apitoken-create-btn" class="btn btn-primary btn-block" data-i18n="tokens.createBtn">Create Token</button></div>
           </div>
           <p class="hint" id="apitoken-test-result"></p>
