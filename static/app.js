@@ -824,7 +824,16 @@ bind("#users-table", "click", async (e) => {
             blocked = true;
           }
         }
-      } catch (_) {}
+      } catch (_) {
+        // Fail closed. This catch used to be empty, so a 500/429/dropped
+        // connection on /api/settings left `blocked` false and the download
+        // below still ran - handing a WireGuard config to the customer with no
+        // server public key in it, and no warning. The comment above promises
+        // "nothing was downloaded", which was only ever true on the !wg_pub
+        // branch. If we cannot confirm the key, do not ship the config.
+        toast(t("msg.wgKeyWarn"), false);
+        blocked = true;
+      }
       if (blocked) return;
       if (!(await ensureAuth())) return;
       openDownload(`/api/users/${id}/config`);
@@ -1298,8 +1307,15 @@ async function saveAllSettings() {
   body.cdn_enabled = document.querySelector('[name="cdn_enabled"]').checked;
   body.cdn_sni = document.querySelector('[name="cdn_sni"]').value.trim();
   // A NaN port would be sent as null and 422 the whole save; say which field.
+  // Number.isFinite alone is not enough: it accepts 0, 70000 and 443.5, and the
+  // schema is StrictInt(ge=1, le=65535). A rejected field then 422s the ENTIRE
+  // save, so an out-of-range port silently discards the domain, DNS and every
+  // other setting the operator changed on the same screen. The sibling forms
+  // (server-nodes, inbounds, tunnel nodes) already check the bounds - only this
+  // path was checking that the value was a number.
   for (const [k, v] of Object.entries(body)) {
-    if (k.endsWith("_port") && !Number.isFinite(v)) {
+    if (!k.endsWith("_port")) continue;
+    if (!Number.isFinite(v) || v < 1 || v > 65535 || !Number.isInteger(v)) {
       toast(t("msg.badNumbers"), false);
       return;
     }

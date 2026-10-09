@@ -87,6 +87,10 @@ OFFLINE_SUITES = [
     # not produce, so every token an operator minted was a `full` credential.
     # Each assertion is checked against a mutated copy of the real files too.
     ("api_scope_test.py", "API token scope control"),
+    # Two guards that read as protection and are not: a port check that only
+    # proved the value was a number, and an empty catch that let the download
+    # proceed after the pre-check failed.
+    ("settings_guard_test.py", "settings + download guards"),
     ("i18n_test.py", "docs i18n dictionaries"),
     # Reads the route table out of main.py, the sidebar out of app.js and the
     # setting keys out of protocols.py, then requires a real mention in the
