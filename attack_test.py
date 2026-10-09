@@ -693,20 +693,6 @@ for _ in range(45):
     st_q, _, _ = req("GET", f"/api/users/{uid}/qr", headers=AUTH) if uid else (0, {}, b"")
     qr_codes.append(st_q)
 check("QR endpoint is rate-limited", 429 in qr_codes, f"no 429 in {len(qr_codes)} calls")
-def _relogin():
-    """A restore deliberately rotates the admin session; re-auth and keep going.
-
-    Without this every check after a restore reads 401 'Session expired' and
-    the suite reports product bugs that are really just a stale cookie.
-    """
-    st, hb, _ = req("POST", "/api/login",
-                   json.dumps({"username": ADMIN, "password": PASSWORD}), AUTH)
-    for part in (dict(hb).get("set-cookie") or dict(hb).get("Set-Cookie") or "").split(";"):
-        if part.strip().startswith("zefira_session="):
-            AUTH["Cookie"] = f"zefira_session={part.split('=', 1)[1]}"
-    return st
-
-
 # A pathological Host must not inflate the generated link.
 st_h, _, hb = raw_request("GET", f"/api/users/{uid}/qr", b"", {"X-Requested-With": "XMLHttpRequest"},
                           "a" * 2000 + ":8000")
@@ -838,6 +824,29 @@ try:
 except Exception:
     total = -1
 check("attack suite cleaned up", total == 0, f"leftover users={total}")
+# Re-seed one customer before the backup below. The cleanup above empties the
+# table, and a restore REPLACES that table - so the panel now refuses a
+# backup whose `users` list is empty, because an empty list means "delete
+# every customer", not "restore none". The crafted-backup probe is about the
+# api_tokens/admins block, not about the emptiness, so it needs a real row.
+st, _, _ = req("POST", "/api/users", json.dumps({
+    "username": "atk_seed", "protocols": ["vless"],
+    "volume_gb": 1.0, "days": 10}), AUTH)
+
+
+def _relogin():
+    """A restore deliberately rotates the admin session; re-auth and keep going.
+
+    Without this every check after a restore reads 401 'Session expired' and
+    the suite reports product bugs that are really just a stale cookie.
+    """
+    st, hb, _ = req("POST", "/api/login",
+                   json.dumps({"username": ADMIN, "password": PASSWORD}), AUTH)
+    for part in (dict(hb).get("set-cookie") or dict(hb).get("Set-Cookie") or "").split(";"):
+        if part.strip().startswith("zefira_session="):
+            AUTH["Cookie"] = f"zefira_session={part.split('=', 1)[1]}"
+    return st
+
 
 
 # ------------------------------------------------- restore must not import credentials
@@ -849,7 +858,11 @@ st, evil_bk = js("POST", "/api/backup", {"password_confirm": PASSWORD}, AUTH, ti
 if st == 200 and isinstance(evil_bk, dict):
     evil_bk = dict(evil_bk)
     evil_bk["password_confirm"] = PASSWORD
-    evil_bk["users"] = []
+    # Do NOT empty `users` here. A restore now refuses an empty customer list,
+    # because an empty list means "delete every customer", not "restore none".
+    # The point of this probe is the crafted api_tokens/admins block, so keep
+    # the real customer rows this backup already carries and let the restore
+    # run. The emptiness refusal has its own guard in restore_guard_test.py.
     evil_bk["api_tokens"] = [{
         "name": "backdoor", "prefix": "zzzz",
         "token_sha": hashlib.sha256(b"backdoor-token").hexdigest(),

@@ -381,6 +381,16 @@ if uid:
     st, _, _ = req("DELETE", f"/api/users/{uid}", headers=AUTH)
     check("user delete", st == 200, f"got {st}")
     CREATED_IDS.clear()
+# Create a customer again before the backup below. A restore REPLACES the
+    # customer table, and the panel now refuses an empty `users` list because an
+    # empty list means "delete every customer", not "restore none". Without this
+    # row the round-trip restore was rejected with 400 - correctly - and the
+    # suite read that as a product failure. The guard is right; the fixture was
+    # not: it deleted the only user and then tried to restore the result.
+st, _, _ = req("POST", "/api/users", json.dumps({
+    "username": "fte_roundtrip", "protocols": ["vless"],
+    "volume_gb": 2.0, "days": 30}), AUTH)
+check("round-trip customer created for the backup", st == 200, f"got {st}")
 
 # ---- backup round-trip (same data back) ----
 st, _, bbb = req("POST", "/api/backup", json.dumps({"password_confirm": PASSWORD}), AUTH)

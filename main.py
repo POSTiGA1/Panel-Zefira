@@ -29,7 +29,7 @@ from jinja2 import Environment as _JinjaEnv
 from jinja2 import FileSystemLoader as _JinjaLoader
 from jinja2 import select_autoescape as _autoescape
 from pydantic import ValidationError
-from sqlalchemy import func, select, text as sqltext, update
+from sqlalchemy import func, or_, select, text as sqltext, update
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -2564,8 +2564,16 @@ def api_tokens_create(data: ApiTokenCreateIn, request: Request, admin: Admin = D
         # A live-token cap: the per-endpoint throttle (10 per 10 minutes) let
         # an attacker accumulate a backdoor fleet faster than the operator
         # could delete one (deletions are capped at 10 per 10 minutes).
+        # The comment says "live", so expired tokens must not count: the query
+        # had no expires_at predicate, so a token that expired years ago still
+        # occupied a slot and the operator hit "You already have N API tokens"
+        # and had to delete live credentials to make room. Same definition of
+        # expired as _token_expired: NULL means never expires, and must count.
+        _now = utcnow()
         live = s.scalar(
-            select(func.count()).select_from(ApiToken).where(ApiToken.admin_id == admin.id)
+            select(func.count()).select_from(ApiToken)
+            .where(ApiToken.admin_id == admin.id)
+            .where(or_(ApiToken.expires_at.is_(None), ApiToken.expires_at > _now))
         ) or 0
         if live >= API_TOKEN_MAX_PER_ADMIN:
             raise HTTPException(
@@ -4741,7 +4749,13 @@ def _snapshot_db_before_restore() -> None:
                 except OSError:
                     pass
     except Exception as exc:
-        log.debug("pre-restore snapshot failed: %s", exc)
+        # error, not debug: basicConfig runs at INFO, so log.debug dropped this
+        # entirely. Every other branch of this same snapshot (the pg_dump
+        # failure, the copy failure, the external-DB failure) logs at error or
+        # warning - only the SQLite path, which is the default install, was
+        # silent. The operator believes a rollback point exists when it does
+        # not, and this is the one moment that matters.
+        log.error("pre-restore snapshot failed: %s", exc)
 
 
 def _apply_restore_tx(data: RestoreIn, request: Request, admin: Admin):
@@ -4770,6 +4784,20 @@ def _apply_restore_tx_locked(data: RestoreIn, request: Request, admin: Admin):
     # Rows whose credentials must be re-minted server-side, charged per
     # expensive protocol. See the re-provision branch below.
     ovpn_budget = 0
+    # A restore REPLACES the customer table: the loop below deletes every
+    # VpnUser before re-inserting prepared_users. An empty `users` list
+    # therefore means "delete every customer", not "restore no customers" -
+    # and `users: List[dict] = Field(max_length=10000)` has no min_length, so an
+    # empty list is perfectly valid input. The operator pastes a settings-only
+    # export, re-types their password, and every customer is gone. The
+    # pre-restore snapshot is the only way back, and that snapshot can itself
+    # fail silently. Refuse rather than wiping on an empty list.
+    if not data.users:
+        raise HTTPException(
+            status_code=400,
+            detail="This backup contains no customers. Restoring it would delete "
+                   "every existing customer, so it was refused. Export the "
+                   "customers first, or restore a file that includes them.")
     prepared_users = []
     for ru_raw in data.users:
         # Per-row validation: one bad customer must not abort the file.

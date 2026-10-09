@@ -520,12 +520,20 @@ if strs == 200:
         req("DELETE", f"/api/users/{u['id']}", headers=AUTH2)
 check("restore keeps every row, re-deriving an unreadable expiry", ok_atomic)
 
+# One real customer row, because a restore now REFUSES an empty `users` list:
+# an empty list means "delete every customer", not "restore no customers", so
+# this payload would be rejected with 400 before the credential check below ever
+# ran. Supplying a valid row keeps the test testing what it was written for -
+# that a crafted api_tokens/admin block is not imported - rather than testing
+# the empty-list refusal.
+probe_user = {"username": "probe_restore_row", "volume_gb": 1.0,
+              "duration_days": 30, "protocols": ["vless"]}
 # ---- 25b. Restore must NOT import credentials (a backup is unsigned) ----
 # Importing `api_tokens` from a backup file meant a crafted file could ship
 # token_sha=sha256(attacker_chosen) with scope "full" and become a working
 # backdoor admin token after the operator typed their current password.
 strst, _, rsb = req("POST", "/api/restore", json.dumps({
-    "zefira_backup": True, "users": [], "password_confirm": PASSWORD,
+    "zefira_backup": True, "users": [probe_user], "password_confirm": PASSWORD,
     "api_tokens": [{"name": "restored-bot", "prefix": "zfp_abc",
                     "token_sha": "d" * 64, "scopes": "full"}],
     "admins": [{"username": "backdoor_admin",

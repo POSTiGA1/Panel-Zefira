@@ -91,6 +91,13 @@ OFFLINE_SUITES = [
     # proved the value was a number, and an empty catch that let the download
     # proceed after the pre-check failed.
     ("settings_guard_test.py", "settings + download guards"),
+    # A restore replaces the customer table, and the backup format permits an
+    # empty users list. Also: a silent snapshot failure and a token cap that
+    # counts expired tokens.
+    ("restore_guard_test.py", "restore + snapshot + token cap guards"),
+    # Three silent harness faults that each produced "17/26 suites passed"
+    # with a wall of 401s, and looked like nine broken suites.
+    ("harness_login_test.py", "harness can reach its admin"),
     ("i18n_test.py", "docs i18n dictionaries"),
     # Reads the route table out of main.py, the sidebar out of app.js and the
     # setting keys out of protocols.py, then requires a real mention in the
@@ -128,6 +135,21 @@ def stop(proc):
             proc.wait(timeout=10)
         except Exception:
             proc.kill()
+            # After kill() the old code returned immediately, so the next
+            # suite's uvicorn started while the previous one was still tearing
+            # its threads down. Four runs in a row stopped mid-suite with no
+            # traceback in either log, and this machine only has ~2.7 GB free
+            # of 8 GB while a suite is running: starting the next panel on top
+            # of a dying one is what tipped it over. Give it a moment to
+            # release the port and its memory, and reap the process so no
+            # zombie is left holding the database.
+            try:
+                proc.wait(timeout=15)
+            except Exception:
+                pass
+    # Belt and braces: a moment of quiet between suites, so the port is
+    # actually free before the next panel binds it.
+    time.sleep(1.5)
 
 
 RESET_SQL = (
@@ -149,6 +171,15 @@ RESET_SQL = (
     "c.execute(\"update settings set value='' where key='trusted_proxies'\");"
     "c.execute(\"update settings set value='' where key in "
     "('ai_base_url','ai_extra')\");"
+    # The admin row must go too, and this cost a whole run to find: main.py only
+    # adopts ZEFIRA_ADMIN_PASSWORD when the admins table is EMPTY, so an admin
+    # left over from an earlier run keeps whatever password that run ended on,
+    # and every suite then gets 401 on login - which reads as nine broken suites
+    # rather than one stale credential. Two suites legitimately change the
+    # password mid-run, so a run interrupted between the change and the revert
+    # leaves the harness unable to log in at all. Deleting the row makes the
+    # panel re-bootstrap the admin from the environment on its next start.
+    "c.execute('delete from admins');"
     "c.commit()"
 )
 
@@ -175,7 +206,17 @@ for _s in (sys.stdout, sys.stderr):
         _s.reconfigure(line_buffering=True)
     except (AttributeError, ValueError):
         pass
-CHILD_ENV = dict(os.environ, PYTHONUNBUFFERED="1")
+# The panel creates its first admin only when the admins table is empty, and it
+# takes the password from ZEFIRA_ADMIN_PASSWORD. Without these two the panel
+# generated a random one, so every suite's login failed with 401 and the whole
+# harness looked broken. The admin row is deleted in RESET_SQL above, so this
+# is the path that actually provisions the account the suites log in with.
+CHILD_ENV = dict(
+    os.environ,
+    PYTHONUNBUFFERED="1",
+    ZEFIRA_ADMIN_USERNAME=ADMIN,
+    ZEFIRA_ADMIN_PASSWORD=PASSWORD,
+)
 
 for script, label in SUITES:
     # Reset BEFORE each suite too: a dirty workdir (leftovers from manual
@@ -193,6 +234,7 @@ for script, label in SUITES:
         [PY, "-m", "uvicorn", "main:app", "--host", HOST, "--port", str(PORT),
          "--no-server-header", "--no-proxy-headers", "--no-access-log"],
         cwd=ROOT, stdout=log_fh, stderr=subprocess.STDOUT,
+        env=CHILD_ENV,
         creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
     )
     if not wait_up():
