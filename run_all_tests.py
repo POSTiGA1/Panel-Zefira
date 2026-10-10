@@ -98,6 +98,9 @@ OFFLINE_SUITES = [
     # Three silent harness faults that each produced "17/26 suites passed"
     # with a wall of 401s, and looked like nine broken suites.
     ("harness_login_test.py", "harness can reach its admin"),
+    # The site assistant answered "what is new?" with a release eleven versions
+    # old, and linked to a changelog that disagreed with it.
+    ("release_notes_test.py", "assistant not stale"),
     ("i18n_test.py", "docs i18n dictionaries"),
     # Reads the route table out of main.py, the sidebar out of app.js and the
     # setting keys out of protocols.py, then requires a real mention in the
