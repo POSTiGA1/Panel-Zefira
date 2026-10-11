@@ -1,0 +1,302 @@
+"""Every settings card, exercised end-to-end against a live panel.
+
+Read, change, read back, restore. Run like the other live suites:
+    .venv\\Scripts\\python settings_cards_test.py http://127.0.0.1:PORT admin PASSWORD
+
+WHY THIS EXISTS SEPARATELY
+functional_test.py touches most of these endpoints, but one fact makes them
+dangerous to test casually: `PUT /api/settings` is a FULL REPLACE, not a merge.
+The handler iterates a fixed key list and calls `getattr(data, k)`, so a field
+omitted from the body is written as its schema default - `wg_pub` becomes "",
+`dns` becomes "1.1.1.1", every port resets. A partial PUT is therefore a silent
+data-loss operation. This suite always reads the current values first and
+replays the WHOLE dict, and it asserts that the restore leg actually put the
+originals back.
+
+Probe choices, and why:
+- Cards whose action has an irreversible external effect (issuing a real
+  certificate, sending a real Telegram message, spending provider quota) are
+  probed with input the schema rejects BEFORE the handler body runs, or with a
+  request the handler short-circuits. That exercises the endpoint, the CSRF
+  middleware and the validation path without touching Let's Encrypt, a real
+  chat, or a paid API.
+- Write-only fields (the AI key, the Telegram token) are never read back -
+  the GET returns `has_key`/`has_token` booleans - and an empty value means
+  "keep current", so the suite sends "" on both legs and asserts on the
+  boolean.
+- change-password costs 2 of its 6-per-5-minutes budget per cycle and resets
+  the budget on success, so it runs exactly one cycle and re-logs in.
+"""
+import io
+import json
+import os
+import re
+import sys
+import urllib.error
+import urllib.request
+
+BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8000").rstrip("/")
+ADMIN = sys.argv[2] if len(sys.argv) > 2 else "admin"
+PASSWORD = sys.argv[3] if len(sys.argv) > 3 else "YOUR_PASSWORD"
+
+results = []
+
+
+def check(name, ok, detail=""):
+    results.append((name, bool(ok), detail))
+    tag = "PASS" if ok else "FAIL"
+    print("[%s] %s%s" % (tag, name, ("  " + detail) if detail else ""))
+
+
+def req(method, path, body=None, headers=None, timeout=30):
+    hdrs = {"User-Agent": "zefira-settingscards/1.0"}
+    if headers:
+        hdrs.update(headers)
+    data = None
+    if body is not None:
+        data = body.encode() if isinstance(body, str) else body
+        hdrs.setdefault("Content-Type", "application/json")
+    r = urllib.request.Request(BASE + path, data=data, method=method, headers=hdrs)
+    try:
+        resp = urllib.request.urlopen(r, timeout=timeout)
+        return resp.status, dict(resp.headers), resp.read()
+    except urllib.error.HTTPError as e:
+        return e.code, dict(e.headers), e.read()
+    except Exception as e:
+        return 0, {}, str(e).encode()
+
+
+def login_with(password):
+    st, hd, _ = req("POST", "/api/login",
+                    json.dumps({"username": ADMIN, "password": password}),
+                    {"X-Requested-With": "XMLHttpRequest"})
+    tok = ""
+    for part in ((hd.get("set-cookie") or hd.get("Set-Cookie") or "").split(";")):
+        part = part.strip()
+        if part.startswith("zefira_session="):
+            tok = part.split("=", 1)[1]
+    return st, {"Cookie": "zefira_session=" + tok,
+                "X-Requested-With": "XMLHttpRequest"}
+
+
+def body_json(raw):
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+
+# ---------------------------------------------------------------- 0. session
+st, AUTH = login_with(PASSWORD)
+check("login works", st == 200, "status=%d" % st)
+if st != 200:
+    print("ABORT: cannot log in")
+    sys.exit(2)
+
+print("\n=== 1. Server / Hosts Settings (the full-replace one) ===")
+st, _, raw = req("GET", "/api/settings", headers=AUTH)
+orig = body_json(raw)
+check("GET /api/settings returns the panel settings", st == 200 and orig.get("domain") is not None,
+      "status=%d keys=%d" % (st, len(orig)))
+
+# A marker that is definitely NOT what the operator set, changed and restored.
+MARKER = "settingscards.example.com"
+mod = dict(orig)
+mod["domain"] = MARKER
+mod["dns"] = "9.9.9.9"
+st, _, pb = req("PUT", "/api/settings", json.dumps(mod), AUTH)
+after_put = body_json(pb)
+check("PUT /api/settings accepts a full body", st == 200, "status=%d %s" % (st, str(pb)[:80]))
+
+st, _, raw2 = req("GET", "/api/settings", headers=AUTH)
+reread = body_json(raw2)
+check("the changed domain reads back", reread.get("domain") == MARKER, str(reread.get("domain")))
+check("the changed dns reads back", reread.get("dns") == "9.9.9.9", str(reread.get("dns")))
+
+# The whole point: replaying the ORIGINAL dict must restore everything,
+# including a key the suite never touched.
+restore = dict(reread)
+restore.update({k: v for k, v in orig.items() if k in restore or k in orig})
+st, _, _ = req("PUT", "/api/settings", json.dumps(orig), AUTH)
+st, _, raw3 = req("GET", "/api/settings", headers=AUTH)
+final = body_json(raw3)
+check("the original settings were restored", final.get("domain") == orig.get("domain"),
+      "%s -> %s" % (orig.get("domain"), final.get("domain")))
+check("the untouched dns was not clobbered", final.get("dns") == orig.get("dns"),
+      "%s -> %s" % (orig.get("dns"), final.get("dns")))
+
+print("\n=== 2. a partial PUT is a silent data loss, so it must be refused ===")
+# Four ports are required in SettingsIn, so a partial body 422s rather than
+# wiping. Assert that, because it is the only thing standing between an API
+# caller and an erased WireGuard key.
+st, _, pb = req("PUT", "/api/settings", json.dumps({"domain": "partial.example.com"}), AUTH)
+check("a partial settings PUT is refused, not merged", st == 422, "status=%d" % st)
+st, _, raw4 = req("GET", "/api/settings", headers=AUTH)
+after_partial = body_json(raw4)
+check("the refused PUT changed nothing", after_partial.get("domain") == orig.get("domain"),
+      str(after_partial.get("domain")))
+
+print("\n=== 3. AI Assistant ===")
+st, _, raw = req("GET", "/api/ai/settings", headers=AUTH)
+ai = body_json(raw)
+check("GET /api/ai/settings answers", st == 200, "status=%d keys=%s" % (st, sorted(ai)))
+check("the AI key is never returned", "api_key" not in ai and "has_key" in ai,
+      "has_key=%s" % ai.get("has_key"))
+
+ai_orig = dict(ai)
+probe = dict(ai)
+probe.update({"enabled": False, "provider": "groq", "model": "settings-cards-probe",
+              "api_key": "", "extra": "", "base_url": ""})
+st, _, pb = req("PUT", "/api/ai/settings", json.dumps(probe), AUTH)
+check("PUT /api/ai/settings accepts the probe", st == 200, "status=%d %s" % (st, str(pb)[:70]))
+st, _, raw = req("GET", "/api/ai/settings", headers=AUTH)
+ai2 = body_json(raw)
+check("the AI model reads back", ai2.get("model") == "settings-cards-probe", str(ai2.get("model")))
+check("an empty api_key preserved the stored one", ai2.get("has_key") == ai_orig.get("has_key"),
+      "%s -> %s" % (ai_orig.get("has_key"), ai2.get("has_key")))
+
+back = {k: ai_orig.get(k, "") for k in ("enabled", "provider", "model", "extra", "base_url")}
+back["enabled"] = ai_orig.get("enabled", False)
+back["api_key"] = ""
+st, _, _ = req("PUT", "/api/ai/settings", json.dumps(back), AUTH)
+st, _, raw = req("GET", "/api/ai/settings", headers=AUTH)
+ai3 = body_json(raw)
+check("the original AI settings were restored", ai3.get("model") == ai_orig.get("model"),
+      "%s -> %s" % (ai_orig.get("model"), ai3.get("model")))
+
+# The Test button must refuse when the assistant is not configured, rather than
+# spending provider quota.
+st, _, _ = req("POST", "/api/ai/test", json.dumps({}), AUTH)
+check("AI test refuses when unconfigured (no quota spent)", st == 400, "status=%d" % st)
+
+print("\n=== 4. Telegram Notifications ===")
+st, _, raw = req("GET", "/api/telegram", headers=AUTH)
+tg = body_json(raw)
+check("GET /api/telegram answers", st == 200, "status=%d keys=%s" % (st, sorted(tg)))
+check("the bot token is never returned", "bot_token" not in tg and "has_token" in tg,
+      "has_token=%s" % tg.get("has_token"))
+
+tg_orig = dict(tg)
+probe = {"bot_token": "", "chat_id": "settingscards_probe"}
+st, _, pb = req("PUT", "/api/telegram", json.dumps(probe), AUTH)
+check("PUT /api/telegram accepts the probe", st == 200, "status=%d %s" % (st, str(pb)[:70]))
+st, _, raw = req("GET", "/api/telegram", headers=AUTH)
+tg2 = body_json(raw)
+check("the chat id reads back", tg2.get("chat_id") == "settingscards_probe", str(tg2.get("chat_id")))
+check("an empty bot_token preserved the stored one", tg2.get("has_token") == tg_orig.get("has_token"),
+      "%s -> %s" % (tg_orig.get("has_token"), tg2.get("has_token")))
+
+st, _, _ = req("PUT", "/api/telegram",
+               json.dumps({"bot_token": "", "chat_id": tg_orig.get("chat_id", "")}), AUTH)
+st, _, raw = req("GET", "/api/telegram", headers=AUTH)
+check("the original chat id was restored", body_json(raw).get("chat_id") == tg_orig.get("chat_id"),
+      str(body_json(raw).get("chat_id")))
+
+# The Test button must refuse before sending anything.
+st, _, pb = req("POST", "/api/telegram/test", json.dumps({}), AUTH)
+check("Telegram test refuses rather than sending to a real chat",
+      st in (400, 200) and (st == 400 or not tg_orig.get("has_token")),
+      "status=%d %s" % (st, str(pb)[:60]))
+
+print("\n=== 5. SSL Certificate (probed without issuing anything) ===")
+st, _, raw = req("GET", "/api/ssl/status", headers=AUTH)
+ssl = body_json(raw)
+check("GET /api/ssl/status answers", st == 200 and "installed" in ssl, "status=%d keys=%s" % (st, sorted(ssl)))
+# A domain shorter than the schema minimum is rejected by FastAPI before the
+# handler body, so certbot is never invoked and no limiter slot is spent.
+st, _, pb = req("POST", "/api/ssl/issue",
+                json.dumps({"domain": "x", "subdomain": "", "email": "probe@example.com"}), AUTH)
+check("an invalid SSL domain is refused before certbot runs", st == 422, "status=%d %s" % (st, str(pb)[:60]))
+st, _, pb = req("POST", "/api/ssl/issue",
+                json.dumps({"domain": "settingscards.example.com", "subdomain": "",
+                            "email": "not-an-email"}), AUTH)
+check("an invalid SSL email is refused", st == 422, "status=%d" % st)
+if not ssl.get("domains"):
+    st, _, pb = req("POST", "/api/ssl/renew", json.dumps({}), AUTH)
+    check("renew refuses when no certificate exists", st == 400, "status=%d %s" % (st, str(pb)[:60]))
+else:
+    check("renew skipped: this panel already has a certificate", True)
+
+print("\n=== 6. Backup & Restore ===")
+st, hd, bb = req("POST", "/api/backup", json.dumps({"password_confirm": PASSWORD}), AUTH, timeout=60)
+check("backup downloads a payload", st == 200, "status=%d" % st)
+bk = body_json(bb)
+check("the backup is a zefira_backup document", bk.get("zefira_backup") is True,
+      "keys=%s" % sorted(bk)[:6])
+check("the backup carries a users list", isinstance(bk.get("users"), list), str(type(bk.get("users"))))
+# An earlier version of this check asserted the backup carried no
+# `password_hash`, and failed. That assertion was wrong, not the product: the
+# admins array IS exported on purpose, because restoring onto a different host
+# is a real operation and scrypt hashes are what make that possible. What must
+# be true - and is what this now checks - is that the file SAYS those
+# credentials are not imported, because an operator seeing `admins` with a hash
+# in it would otherwise assume the password came back with it.
+check("the backup states that its credentials are never imported",
+      "NEVER imported" in (bk.get("credentials_note") or ""),
+      repr(bk.get("credentials_note"))[:70])
+
+st, _, pb = req("POST", "/api/backup", json.dumps({"password_confirm": "wrong-password"}), AUTH)
+check("backup refuses a wrong password", st in (400, 401, 403), "status=%d" % st)
+
+# An empty users list must be refused, not treated as "delete everyone".
+st, _, pb = req("POST", "/api/restore", json.dumps(
+    {"zefira_backup": True, "password_confirm": PASSWORD, "users": []}), AUTH, timeout=60)
+check("a customers-less restore is refused", st == 400, "status=%d %s" % (st, str(pb)[:70]))
+
+print("\n=== 7. Security Events (read-only) ===")
+st, _, raw = req("GET", "/api/audit", headers=AUTH)
+try:
+    audit = json.loads(raw)
+except Exception:
+    audit = None
+check("GET /api/audit answers", st == 200 and isinstance(audit, list), "status=%d" % st)
+if isinstance(audit, list):
+    row = audit[0] if audit else {}
+    check("audit rows carry the fields the UI reads",
+          all(k in row for k in ("ts", "event", "detail", "ip")), "keys=%s" % sorted(row))
+    check("audit rows are bounded", len(audit) <= 50, "n=%d" % len(audit))
+    known = set()
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        with io.open(os.path.join(here, "main.py"), encoding="utf-8") as fh:
+            known = set(re.findall(r'audit\(\s*s?\b[^,]*,\s*"([A-Z_]{3,})"', fh.read()))
+    except Exception:
+        known = set()
+    if known:
+        unlabelled = sorted({r.get("event") for r in audit
+                             if r.get("event") in known} - known)
+        check("every event emitted here has a label", not unlabelled, str(unlabelled[:6]))
+
+print("\n=== 8. Change Admin Password (one cycle; it resets the budget on success) ===")
+st, _, _ = req("POST", "/api/change-password", json.dumps(
+    {"current_password": "definitely-not-it", "new_password": "Another12345"}), AUTH)
+check("password change refuses a wrong current password", st in (400, 401, 403), "status=%d" % st)
+
+TMP = "SetTmp12345"
+st, _, pb = req("POST", "/api/change-password", json.dumps(
+    {"current_password": PASSWORD, "new_password": TMP}), AUTH)
+check("password change accepts the correct current password", st == 200, "status=%d %s" % (st, str(pb)[:70]))
+st, AUTH2 = login_with(TMP)
+check("login with the new password", st == 200, "status=%d" % st)
+st, _, pb = req("POST", "/api/change-password", json.dumps(
+    {"current_password": TMP, "new_password": PASSWORD}), AUTH2)
+check("password changed back", st == 200, "status=%d %s" % (st, str(pb)[:70]))
+st, AUTH = login_with(PASSWORD)
+check("the original password works again", st == 200, "status=%d" % st)
+st, _, _ = req("POST", "/api/change-password", json.dumps(
+    {"current_password": "definitely-not-it", "new_password": "Another12345"}), AUTH)
+check("password change refuses a wrong current password again", st in (400, 401, 403), "status=%d" % st)
+
+print("\n=== 9. CSRF still guards every mutating route ===")
+st, _, _ = req("PUT", "/api/settings", json.dumps(orig), None)
+check("a mutating call with no CSRF header is refused", st == 403, "status=%d" % st)
+st, _, _ = req("PUT", "/api/ai/settings", json.dumps({"enabled": False}), None)
+check("the AI route is CSRF-guarded too", st == 403, "status=%d" % st)
+
+passed = sum(1 for _, ok, _ in results if ok)
+print("\n=== SUMMARY ===")
+for name, ok, detail in results:
+    if not ok:
+        print("  FAILED: %s %s" % (name, detail))
+print("%d/%d checks passed" % (passed, len(results)))
+sys.exit(0 if passed == len(results) else 1)

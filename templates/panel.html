@@ -480,34 +480,10 @@
 
 
     <section id="section-settings" class="section">
+      <p class="hint mt-0" data-i18n="settings.intro">Everything on this page. Server and network settings take effect immediately; the rest apply to new connections.</p>
+
+      <div class="sub-head"><h1 data-i18n="settings.core">Core</h1></div>
       <div class="settings-grid">
-
-        <div class="card form-card">
-          <div class="card-head"><h2 data-i18n="ai.title">AI Assistant</h2><span class="badge proto" id="ai-badge">off</span></div>
-          <p class="hint mt-0"><span data-i18n="ai.hintA">Chat helper that knows this panel inside-out (answers panel questions only).</span> <b>Groq</b> <span data-i18n="ai.hintB">is the default (free, fast) — get a key at console.groq.com, pick a model like</span> <code>qwen/qwen3.8-27b</code><span data-i18n="ai.hintC">, leave the base URL empty. OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter and Ollama also work.</span></p>
-          <label class="proto-check wide"><input type="checkbox" id="ai-enabled"><span data-i18n="ai.enable">Enable AI assistant</span></label>
-          <div class="field-row">
-            <label class="field"><span data-i18n="ai.provider">Provider</span>
-              <select id="ai-provider">
-                <option value="groq" data-i18n="ai.provGroq">Groq (free, recommended)</option>
-                <option value="openai" data-i18n="ai.provOpenai">OpenAI-compatible (OpenAI / DeepSeek / OpenRouter / Ollama…)</option>
-                <option value="anthropic" data-i18n="ai.provAnthropic">Anthropic (Claude)</option>
-                <option value="gemini" data-i18n="ai.provGemini">Google (Gemini)</option>
-              </select>
-            </label>
-            <label class="field"><span data-i18n="ai.model">Model</span><input type="text" id="ai-model" maxlength="100" placeholder="qwen/qwen3.8-27b" spellcheck="false"></label>
-          </div>
-          <label class="field"><span data-i18n="ai.baseUrl">API base URL (empty = Groq default https://api.groq.com/openai/v1; e.g. http://127.0.0.1:11434/v1 for Ollama)</span><input type="text" id="ai-base" maxlength="300" placeholder="https://api.groq.com/openai/v1" spellcheck="false"></label>
-          <label class="field"><span data-i18n="ai.apiKey">API key (stored encrypted, empty = keep current)</span><input type="password" id="ai-key" maxlength="500" autocomplete="off" placeholder="gsk-…"></label>
-          <label class="field"><span data-i18n="ai.extra">Extra instructions (optional)</span><input type="text" id="ai-extra" maxlength="500" placeholder="e.g. Always answer in Persian"></label>
-          <button type="button" id="ai-save-btn" class="btn btn-primary" data-i18n="ai.saveBtn">Save AI Settings</button>
-          <button type="button" id="ai-test-btn" class="btn btn-ghost" data-i18n="ai.testBtn">Test</button>
-        </div>
-
-        <!-- The API Tokens card moved to the Developer API section: it is a
-             developer surface, not a setting, and leaving a second copy here
-             would give the page two #apitoken-create-btn elements - $("#…")
-             binds only the first, so one of them would be dead. -->
         <form id="pw-form" class="card form-card" method="post">
           <div class="card-head"><h2 data-i18n="pw.title">Change Admin Password</h2></div>
           <label class="field"><span data-i18n="pw.current">Current password</span><input type="password" name="current" minlength="8" maxlength="128" required></label>
@@ -516,7 +492,6 @@
           <button type="submit" class="btn btn-primary" data-i18n="pw.saveBtn">Save New Password</button>
           <p class="hint" data-i18n="pw.hint">Changing the password invalidates all other active sessions.</p>
         </form>
-
         <form id="srv-form" class="card form-card" method="post">
           <div class="card-head"><h2 data-i18n="srv.title">Server / Hosts Settings</h2></div>
           <p class="hint mt-0" data-i18n="srv.hint">These values are embedded into generated configs and subscription links.</p>
@@ -548,7 +523,10 @@
           <label class="proto-check wide"><input type="checkbox" name="block_direct_ip"><span data-i18n="srv.blockIp">Block direct IP access to panel (anti-filter — only allow domain, hides panel from IP scan)</span></label>
           <button type="submit" class="btn btn-primary" data-i18n="srv.saveBtn">Save Server Settings</button>
         </form>
+      </div>
 
+      <div class="sub-head"><h1 data-i18n="settings.net">Network & TLS</h1></div>
+      <div class="settings-grid">
         <div class="card form-card">
           <div class="card-head"><h2 data-i18n="ssl.title">SSL Certificate (Let's Encrypt)</h2></div>
           <p class="hint mt-0" data-i18n="ssl.hint">Enter your domain and the panel fetches a free certificate itself. Requirements: domain DNS points to this server, port 80 is free, and certbot is installed.</p>
@@ -563,7 +541,6 @@
           </div>
           <p class="hint" id="ssl-status"></p>
         </div>
-
         <div class="card form-card">
           <div class="card-head"><h2 data-i18n="tg.title">Telegram Notifications</h2></div>
           <p class="hint mt-0" data-i18n="tg.hint">Get notified on user create/delete and brute-force lockouts. Create a bot with @BotFather, then send your new bot any message once.</p>
@@ -575,7 +552,31 @@
           </div>
           <p class="hint" id="tg-hint"></p>
         </div>
+      </div>
 
+      <div class="sub-head"><h1 data-i18n="settings.ops">Assistant, Data & Activity</h1></div>
+      <div class="settings-grid">
+        <div class="card form-card">
+          <div class="card-head"><h2 data-i18n="ai.title">AI Assistant</h2><span class="badge proto" id="ai-badge">off</span></div>
+          <p class="hint mt-0"><span data-i18n="ai.hintA">Chat helper that knows this panel inside-out (answers panel questions only).</span> <b>Groq</b> <span data-i18n="ai.hintB">is the default (free, fast) — get a key at console.groq.com, pick a model like</span> <code>qwen/qwen3.8-27b</code><span data-i18n="ai.hintC">, leave the base URL empty. OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter and Ollama also work.</span></p>
+          <label class="proto-check wide"><input type="checkbox" id="ai-enabled"><span data-i18n="ai.enable">Enable AI assistant</span></label>
+          <div class="field-row">
+            <label class="field"><span data-i18n="ai.provider">Provider</span>
+              <select id="ai-provider">
+                <option value="groq" data-i18n="ai.provGroq">Groq (free, recommended)</option>
+                <option value="openai" data-i18n="ai.provOpenai">OpenAI-compatible (OpenAI / DeepSeek / OpenRouter / Ollama…)</option>
+                <option value="anthropic" data-i18n="ai.provAnthropic">Anthropic (Claude)</option>
+                <option value="gemini" data-i18n="ai.provGemini">Google (Gemini)</option>
+              </select>
+            </label>
+            <label class="field"><span data-i18n="ai.model">Model</span><input type="text" id="ai-model" maxlength="100" placeholder="qwen/qwen3.8-27b" spellcheck="false"></label>
+          </div>
+          <label class="field"><span data-i18n="ai.baseUrl">API base URL (empty = Groq default https://api.groq.com/openai/v1; e.g. http://127.0.0.1:11434/v1 for Ollama)</span><input type="text" id="ai-base" maxlength="300" placeholder="https://api.groq.com/openai/v1" spellcheck="false"></label>
+          <label class="field"><span data-i18n="ai.apiKey">API key (stored encrypted, empty = keep current)</span><input type="password" id="ai-key" maxlength="500" autocomplete="off" placeholder="gsk-…"></label>
+          <label class="field"><span data-i18n="ai.extra">Extra instructions (optional)</span><input type="text" id="ai-extra" maxlength="500" placeholder="e.g. Always answer in Persian"></label>
+          <button type="button" id="ai-save-btn" class="btn btn-primary" data-i18n="ai.saveBtn">Save AI Settings</button>
+          <button type="button" id="ai-test-btn" class="btn btn-ghost" data-i18n="ai.testBtn">Test</button>
+        </div>
         <div class="card form-card">
           <div class="card-head"><h2 data-i18n="backup.title">Backup & Restore</h2></div>
           <p class="hint mt-0" data-i18n="backup.dlHint">Download a full JSON snapshot (users, secrets, settings, admin). Keep it safe &mdash; it contains everything.</p>
@@ -585,12 +586,10 @@
           <input type="file" id="restore-file" accept=".json,application/json" class="file-input">
           <button type="button" id="restore-btn" class="btn btn-danger btn-block" disabled data-i18n="backup.restoreBtn">Restore From Backup</button>
         </div>
-
         <div class="card form-card">
           <div class="card-head"><h2 data-i18n="audit.title">Security Events</h2><button type="button" class="icon-btn" id="audit-refresh">&#8635;</button></div>
           <ul class="audit-list" id="audit-list"></ul>
         </div>
-
       </div>
     </section>
 

@@ -4641,6 +4641,20 @@ def api_backup(data: BackupIn, request: Request, admin: Admin = Depends(require_
         "exported_at": utcnow().isoformat(timespec="seconds") + "Z",
         # Lets restore detect OpenVPN credentials signed by another host's CA.
         "meta": {"ca_fingerprint": _ca_fingerprint()},
+        # An operator reading the file sees an `admins` array with a
+        # `password_hash` in it and reasonably assumes it comes back on
+        # restore. It does not: api_restore refuses both this array and
+        # `api_tokens` by design, because a backup is an unsigned file and a
+        # hash is a credential its author chose. Saying so in the document
+        # removes the guess - and makes the file self-explanatory to whoever
+        # inherits it. The hashes are scrypt, not plaintext, and the export
+        # can be encrypted at rest.
+        "credentials_note": (
+            "admins and api_tokens are recorded for reference only and are "
+            "NEVER imported by restore - a backup is unsigned, so its "
+            "credentials would be an attacker's choice, not yours. Keep "
+            "your admin password and re-create API tokens after restoring."
+        ),
         "settings": settings,
         "admins": admins,
         "users": users,

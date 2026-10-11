@@ -37,6 +37,11 @@ SUITES = [
     ("attack_paths_test.py", "operator paths / restore"),
     ("frontend_bugs_test.py", "front-end regressions"),
     ("panel_sections_test.py", "panel sections end-to-end"),
+    # Reads, changes, reads back and restores EVERY settings card. Cards whose
+    # action reaches outside the panel (a real certificate, a real chat, provider
+    # quota) are probed with input rejected before the side effect, so this
+    # exercises them without issuing anything.
+    ("settings_cards_test.py", "every settings card end-to-end"),
     ("security_audit_test.py", "security audit round 1"),
 ]
 # Suites that need no running panel: static guards over the installer, which
@@ -101,6 +106,9 @@ OFFLINE_SUITES = [
     # The site assistant answered "what is new?" with a release eleven versions
     # old, and linked to a changelog that disagreed with it.
     ("release_notes_test.py", "assistant not stale"),
+    # The settings section is grouped by subject. The first attempt at this
+    # grouping dropped 25 controls, so the count is asserted, not just the shape.
+    ("settings_groups_test.py", "settings grouped, nothing lost"),
     ("i18n_test.py", "docs i18n dictionaries"),
     # Reads the route table out of main.py, the sidebar out of app.js and the
     # setting keys out of protocols.py, then requires a real mention in the
