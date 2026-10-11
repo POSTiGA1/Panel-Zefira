@@ -82,6 +82,10 @@ OFFLINE_SUITES = [
     # docs/bump_assets.py wrote its argv version straight into a regex REPLACEMENT,
     # so one backslash corrupted every asset URL in the site. Runs against a COPY.
     ("bump_assets_guard_test.py", "docs asset bump inputs"),
+    # install.sh ran its own prose as root: backticks inside an UNQUOTED
+    # systemd heredoc were executed as commands. Runs the real heredoc.
+    ("installer_unit_test.py", "installer heredoc safety"),
+    ("installer_guard_test.py", "installer symlink + banner guards"),
     # The four READMEs, compared rather than eyeballed: a translation that drops
     # a number, an address or a code fence is worse than none, because the reader
     # cannot tell which part to trust.

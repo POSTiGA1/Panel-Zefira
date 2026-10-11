@@ -37,7 +37,14 @@ check("$TARGET is chowned to the service account",
       re.search(r'chown\s+zefira:zefira\s+"\$TARGET"', src) is not None,
       "the service account cannot replace .env, so this guard is moot")
 check("the tree's top level is chowned too",
-      "-mindepth 1 -maxdepth 1" in src and "chown -R zefira:zefira" in src)
+      # `chown -Rh` (dereference-free) satisfies this too: the premise is that
+      # the top level gets chowned at all, and -h only changes WHAT is chowned
+      # when the entry happens to be a symlink. Matching only the bare `-R`
+      # form made this guard report a hardening improvement as a regression -
+      # the kind of false red that teaches people to ignore a test.
+      "-mindepth 1 -maxdepth 1" in src
+      and re.search(r"chown -Rh? zefira:zefira", src) is not None,
+      "expected `chown -R[h] zefira:zefira` in the find over $TARGET")
 check("the installer runs as root",
       "[[ -z \"${EUID:-$(id -u)}\" ]] && EUID=0" in src
       or "EUID" in src,

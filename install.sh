@@ -44,7 +44,7 @@ SERVICE="zefira"
 # --- begin version-resolution (version_resolution_test.sh slices this block) ---
 # The release this installer ships with. Keep it equal to the VERSION file and
 # let installer_test.py prove it rather than restating the number here.
-ZEFIRA_PINNED="1.15.25"
+ZEFIRA_PINNED="1.15.26"
 
 # Which release do we install? The two ways of answering that disagree, and the
 # disagreement is the whole bug.
@@ -528,6 +528,17 @@ echo "==> [3/6] Python environment..."
 # writable; anything else is discarded and rebuilt. `zefira` can still delete
 # the directory - it lives in a writable parent - but deleting is harmless,
 # because the line below recreates it from the trusted system python3.
+# A symlink is refused outright, BEFORE any inspection of its target.
+# `[[ -d .venv ]]` and `stat` both follow links, so a symlink to a
+# root-owned 0755 directory would pass the owner/mode test below and then
+# be written to as ROOT - `python3 -m venv` creating directories, and
+# `chmod -R u=rwX,go=rX` relaxing that directory's own mode, inside a
+# location the service account chose. Same refusal the .env write and
+# $TARGET/instance already use.
+if [[ -L .venv ]]; then
+    warn "$TARGET/.venv is a SYMLINK - refusing to follow it as root"
+    rm -f .venv
+fi
 if [[ -d .venv ]]; then
     _venv_owner="$(stat -c '%U' .venv 2>/dev/null || echo unknown)"
     _venv_mode="$(stat -c '%a' .venv 2>/dev/null || echo 999)"
@@ -653,7 +664,12 @@ fi
 # and the service then died on boot with `status=200/CHDIR`, looping on
 # systemd's restart policy. `WorkingDirectory=$TARGET` cannot even be entered.
 chown zefira:zefira "$TARGET"
-find "$TARGET" -mindepth 1 -maxdepth 1 ! -name '.venv' -exec chown -R zefira:zefira {} +
+# -h: never dereference. Without it chown follows each operand (documented
+# coreutils behaviour) and find passes every top-level entry as one, so a
+# planted /opt/zefira/pwn -> /etc/sudoers would chown the TARGET of the
+# link. -R alone is not enough - it stops traversal at a symlinked
+# directory but still dereferences the link it is given.
+find "$TARGET" -mindepth 1 -maxdepth 1 ! -name '.venv' -exec chown -Rh zefira:zefira {} +
 chown -R root:root "$TARGET/.venv" 2>/dev/null || true
 # Same traverse requirement as above: root-owned must not mean root-only, or
 # the service dies with 203/EXEC on the next boot. u=rwX,go=rX, never a bare
@@ -674,7 +690,10 @@ fi
 mkdir -p "$TARGET/instance" || { echo "[!] cannot create $TARGET/instance"; exit 1; }
 chown zefira:zefira "$TARGET/instance"
 chmod 700 "$TARGET/instance"
-chmod 600 "$TARGET/instance/zefira.db" 2>/dev/null || true
+# -h for the same reason as the chown above: a symlink planted at this path
+# would otherwise have its TARGET's mode forced to 600. A flag, not a
+# mode suffix - "600h" is not portable.
+chmod -h 600 "$TARGET/instance/zefira.db" 2>/dev/null || true
 chmod 600 "$ENV_FILE"
 # Allow the unprivileged service to restart ONLY itself after an update.
 # No other sudo rights: `sudo -n systemctl restart zefira` from main.py.
@@ -707,7 +726,7 @@ Group=zefira
 WorkingDirectory=$TARGET
 EnvironmentFile=-$ENV_FILE
 # NOTE: there are deliberately NO privileged ExecStartPre=+ helpers here.
-# A `+` command runs as full root while inheriting the service environment and
+# A '+' command runs as full root while inheriting the service environment and
 # the service-writable working tree, so a compromised panel could drop
 # LD_PRELOAD=/opt/zefira/x.so into its own .env and get root code execution the
 # next time the unit started. instance/ is created by the installer and, if it
@@ -723,8 +742,8 @@ RestartSec=3
 # Least privilege + filesystem lockdown (update still works: /opt/zefira
 # is owned by zefira, pip installs into its own .venv).
 # NOTE: no NoNewPrivileges=true here on purpose: the in-panel updater
-# restarts the service via the sudoers-scoped `sudo -n systemctl restart
-# zefira`, and NoNewPrivileges would neuter setuid sudo (silent failure).
+# restarts the service via the sudoers-scoped 'sudo -n systemctl restart
+# zefira', and NoNewPrivileges would neuter setuid sudo (silent failure).
 # The sudoers rule below is already scoped to that single command.
 PrivateTmp=true
 PrivateDevices=true
@@ -944,9 +963,11 @@ fi
 sleep 3
 echo "==> Verifying..."
 if curl -fsS "http://127.0.0.1:$PORT/login" >/dev/null 2>&1; then ok "Panel running on port $PORT"; else
+VERIFY_FAILED=0
     fail "Panel not responding - logs:"; journalctl -u "$SERVICE" -n 40 --no-pager 2>&1 | tail -n 30 || true
+    VERIFY_FAILED=1
 fi
-ss -tlnp 2>/dev/null | grep -q ":$PORT " && ok "Port $PORT listening" || fail "Port $PORT not listening"
+ss -tlnp 2>/dev/null | grep -q ":$PORT " && ok "Port $PORT listening" || { fail "Port $PORT not listening"; VERIFY_FAILED=1; }
 
 IP=$(curl -fsS4 https://api.ipify.org 2>/dev/null || echo SERVER_IP)
 if [[ "$SSL_DONE" == "yes" ]]; then URL="https://$DOMAIN"; elif [[ -n "$DOMAIN" && "$SETUP_NGINX" == [yY]* ]]; then URL="http://$DOMAIN"; else URL="http://$IP:$PORT"; fi
@@ -955,7 +976,20 @@ if [[ "$SSL_DONE" == "yes" ]]; then SSL_LINE="$SSL_CERT (auto-renew installed)";
 
 echo
 banner
+if [[ "$VERIFY_FAILED" -eq 1 ]]; then
+    # Installed but not serving. Say so plainly, and keep the summary
+    # below: the operator needs the database line and the service name to
+    # diagnose it. `fail()` is an echo, so it returned 0 and nothing stopped
+    # the green banner printing over the failure - the panel can be wedged
+    # in a 203/EXEC loop, which is exactly the state the venv-permission
+    # warning above describes.
+    echo "${C_RED}${C_BLD}  Installed, but the panel is NOT answering.${C_RST}  ${C_DIM}${URL}${C_RST}"
+    echo "${C_DIM}  The files and the service unit are in place. Check:${C_RST}"
+    echo "${C_DIM}    systemctl status $SERVICE${C_RST}"
+    echo "${C_DIM}    journalctl -u $SERVICE -n 50 --no-pager${C_RST}"
+else
 echo "${C_GRN}${C_BLD}  Installed.${C_RST}  ${C_DIM}${URL}${C_RST}"
+fi
 echo
 printf ' %sPanel%s    : %s\n' "$C_BLD" "$C_RST" "$URL"
 printf ' %sLocal%s    : %s\n' "$C_BLD" "$C_RST" "http://127.0.0.1:$PORT"
