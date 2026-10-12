@@ -551,7 +551,18 @@ class Database:
             try:
                 import os
 
-                os.chmod(self.engine.url.database, 0o600)
+                # WAL mode keeps the most recently written rows in the -wal
+                # sidecar, so hardening only the main file leaves the freshest
+                # data readable by anyone the umask allows. That matters more
+                # since secret_data became encrypted: the sidecar is where a
+                # just-provisioned customer's bundle sits before a checkpoint.
+                # install.sh sets umask 077, but a panel started by hand
+                # (uvicorn, start.bat) inherits umask 022 and creates these 0644.
+                for suffix in ("", "-wal", "-shm"):
+                    try:
+                        os.chmod(self.engine.url.database + suffix, 0o600)
+                    except OSError:
+                        pass
             except (OSError, AttributeError):
                 pass
         # Each step gets its OWN transaction.

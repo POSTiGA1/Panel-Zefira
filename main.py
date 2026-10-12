@@ -517,38 +517,6 @@ def _ai_target_is_local(host: str) -> bool:
     return False
 
 
-def _is_strong_scrypt_hash(h: str | None) -> bool:
-    """Restore guard: only accept scrypt hashes with production-grade cost.
-
-    A hand-crafted backup could otherwise smuggle a weak hash
-    (e.g. scrypt$1024$... of a known password) that is trivially
-    brute-forced, or a non-scrypt string that permanently locks the
-    account (verify_password would always fail). Require N>=2**14,
-    power-of-two N, sane r/p, and sane salt/dk lengths.
-    """
-    try:
-        if not h or len(h) > 256:
-            return False
-        parts = h.split("$")
-        if len(parts) != 6 or parts[0] != "scrypt":
-            return False
-        n, r, p = int(parts[1]), int(parts[2]), int(parts[3])
-        if n < 2**14 or n > 2**20 or (n & (n - 1)) != 0:
-            return False
-        if not 1 <= r <= 32 or not 1 <= p <= 32:
-            return False
-        # Same cost cap as login-time verify: reject memory-bomb params.
-        if n * r * p > 2**20:
-            return False
-        salt = bytes.fromhex(parts[4])
-        dk = bytes.fromhex(parts[5])
-        if not 8 <= len(salt) <= 64 or not 16 <= len(dk) <= 64:
-            return False
-        return True
-    except (ValueError, TypeError):
-        return False
-
-
 def _valid_restore_secret(proto: str, value: object) -> bool:
     """Per-protocol secret shape guard for backup restores.
 
@@ -799,9 +767,18 @@ def _token_expired(row) -> bool:
 
 
 def _token_scope_allowed(scopes: str | None, method: str, path: str) -> bool:
-    if not scopes or scopes == "full":
+    """Least privilege, and it fails CLOSED.
+
+    Every other branch here denies by default: an unrecognised scope string
+    falls through to `return False`. Only the empty value used to be treated as
+    `full`, which meant a row whose scope was NULL or blank - reachable by a
+    hand-edited database or a non-conforming migration - silently received every
+    privilege. An unknown scope is not a known scope, so it is denied.
+    """
+    scope = (scopes or "").strip()
+    if scope == "full":
         return True
-    if scopes == "bot":
+    if scope == "bot":
         if (method.upper(), path) in BOT_ALLOWED_EXACT:
             return True
         return any(
@@ -1257,6 +1234,7 @@ def notify_async(fmt: str, *untrusted: object) -> None:
     text = tg_message(fmt, *untrusted)
 
     def _send():
+        token = ""
         try:
             token = decrypt_text(cached_setting("tg_bot_token"))
             chat = cached_setting("tg_chat_id") or ""
@@ -1272,7 +1250,13 @@ def notify_async(fmt: str, *untrusted: object) -> None:
             with urllib.request.urlopen(req, timeout=6) as resp:
                 resp.read()
         except Exception as e:
-            log.warning("telegram notify failed: %s", e)
+            # The token is interpolated into the URL above, so an exception that
+            # carries its own request would write a live bot credential into the
+            # journal - readable by every account in the adm group. HTTPError and
+            # URLError do not include the URL, but `except Exception` is broad
+            # and some transport errors stringify their request. Scrub it, the
+            # same way _safe_ai_error already scrubs the API key out of AI errors.
+            log.warning("telegram notify failed: %s", _safe_ai_error(e, token))
 
     # A thread PER NOTIFICATION was unbounded on an unauthenticated path: a
     # lockout alert is triggered by failed logins, so rotating source IPs
@@ -3710,6 +3694,26 @@ def _drop_temp_files(paths) -> None:
             pass
 
 
+def _prune_pre_update_snapshots(keep: int = 2) -> None:
+    """Bound the pre-update snapshots, keeping the newest `keep`.
+
+    Each one is a full copy of secret.key, ca.key, ca.crt, zefira.db and .env.
+    Retention existed, but only inside the RESTORE snapshot - an operator who
+    updated regularly and never restored accumulated one complete set of live
+    key material per update, forever, on the same volume as the database.
+    Best-effort: pruning must never be able to fail an update.
+    """
+    try:
+        olds = sorted(INSTANCE_DIR.glob("pre-update-*"))
+        for old in (olds[:-keep] if keep > 0 else olds):
+            try:
+                shutil.rmtree(old, ignore_errors=True)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
 def _snapshot_runtime_state() -> str | None:
     """Copy the live secrets/database aside before `git reset --hard`.
 
@@ -3743,6 +3747,7 @@ def _snapshot_runtime_state() -> str | None:
             _sh.rmtree(dest, ignore_errors=True)
             return None
         log.warning("Pre-update runtime snapshot: %s (%s)", dest, ", ".join(copied))
+        _prune_pre_update_snapshots()
         return str(dest)
     except Exception as exc:
         log.warning("Could not snapshot runtime state before update: %s", exc)
@@ -4365,6 +4370,13 @@ def api_node_delete(node_id: int, request: Request, admin: Admin = Depends(requi
 
 @app.get("/api/nodes/{node_id}/guide")
 def api_node_guide(node_id: int, request: Request, admin: Admin = Depends(require_admin)):
+    # This route decrypts and returns the very same BackPack token that
+    # POST /api/nodes/{id}/reveal-token returns, but it had no budget at all.
+    # Measured before the fix: 30 consecutive authenticated calls returned 200
+    # while reveal-token returned 429 after 10. One secret disclosure rate-limit
+    # budget, applied to every route that hands out that secret.
+    if not sensitive_limiter.hit(f"nodereveal|{admin.id}"):
+        raise HTTPException(status_code=429, detail="Too many attempts, wait a few minutes")
     with db.s() as s:
         node = _get_node_or_404(s, node_id)
         token = decrypt_text(node.token_enc)
@@ -4777,8 +4789,21 @@ def _apply_restore_tx(data: RestoreIn, request: Request, admin: Admin):
     """Shared restore transaction (plaintext + encrypted paths).
 
     Caller must already have rate-limited and verified password_confirm.
-    All hardening lives here: volume sanity, scrypt-strong admin hashes,
-    strict trusted_proxies, SSRF-blocked AI URLs, and bot/full token scopes.
+
+    What actually hardens this function:
+      - the admins and api_tokens arrays are REFUSED ENTIRELY, so an admin
+        password hash or an API token can never arrive from a file;
+      - volume sanity;
+      - strict trusted_proxies (in RESTORE_ORIGIN_KEYS, so a crafted backup
+        cannot plant it and then claim the panel's own source address);
+      - SSRF-blocked AI base_url, re-validated on import.
+
+    An earlier version of this docstring also promised "scrypt-strong admin
+    hashes" and "bot/full token scopes", checked by _is_strong_scrypt_hash.
+    That function was never called from anywhere, and `scopes` does not appear
+    in this path at all: both concerns are instead settled by refusing those
+    arrays wholesale, which is strictly stronger. The dead checker was removed
+    rather than left advertising a protection the restore path never performed.
     """
     if not restore_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="A restore is already running")
@@ -6286,6 +6311,13 @@ def _api_reset_user_impl(
 
 @app.get("/api/users/{user_id}/config")
 def api_user_config(user_id: int, admin: Admin = Depends(require_admin)):
+    # The whole credential bundle - WireGuard private key, OpenVPN client key
+    # and certificate, L2TP PSK, and every per-protocol password. Measured
+    # before the fix: 30 consecutive calls all returned 200, unbounded, while
+    # the tunnel token one line of UI away was budgeted at 10 per 600s. A
+    # hijacked session could therefore exfiltrate the entire customer base.
+    if not sensitive_limiter.hit(f"userconfig|{admin.id}"):
+        raise HTTPException(status_code=429, detail="Too many attempts, wait a few minutes")
     with db.s() as s:
         user = _get_user_or_404(s, user_id)
         udict = user.to_full_dict()
