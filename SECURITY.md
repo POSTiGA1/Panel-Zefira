@@ -14,14 +14,23 @@ adversarial probes), `attack_quota_test.py` (46 quota/schema boundaries),
 Encrypted at rest with `instance/secret.key` (AES/Fernet):
 
 - Telegram bot token, AI API key
-- REALITY / WireGuard host private keys
+- REALITY private key
 - Tunnel (BackPack) tokens
+- Per-customer credentials in \pn_users.secret_data\ (WireGuard private key,
+  OpenVPN client keypair, L2TP PSK, per-protocol passwords) - encrypted since
+  v1.15.27
+- Customer subscription tokens, since v1.15.29. The column holds a Fernet blob
+  and an HMAC digest column provides the indexed lookup \/sub/{token}\. This
+  one was measured, not suspected: a token read straight out of \zefira.db  answered \/sub/{token}\ with 200 and the customer's private key, and an
+  unencrypted backup carried the same token in cleartext.
 - Encrypted backups
 
-**Not** encrypted: the per-customer VPN credentials in `vpn_users.secret_data`
-(generated UUIDs, per-protocol passwords, WireGuard/OpenVPN client keys). They
-are stored as plain JSON in the SQLite database and are therefore also present
-in plain form in an unencrypted backup JSON.
+Not stored by the panel at all: the WireGuard **host** private key. The panel
+never reads or writes it, so there is nothing to encrypt.
+
+**Not** encrypted: customer-facing display names, notes, usage counters and
+timestamps. These are billing data, not credentials, and they are readable in
+an unencrypted backup by design.
 
 Treat the database and every unencrypted backup as customer credential material:
 
