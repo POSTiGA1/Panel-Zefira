@@ -85,6 +85,10 @@ OFFLINE_SUITES = [
     # install.sh ran its own prose as root: backticks inside an UNQUOTED
     # systemd heredoc were executed as commands. Runs the real heredoc.
     ("installer_unit_test.py", "installer heredoc safety"),
+    # secret_data holds the WireGuard private key, the OpenVPN client keypair
+    # and the L2TP PSK. It was bare json.dumps in a TEXT column, so reading the
+    # SQLite file - or an unencrypted backup - read every customer credential.
+    ("secret_at_rest_test.py", "customer secrets encrypted at rest"),
     ("installer_guard_test.py", "installer symlink + banner guards"),
     # The four READMEs, compared rather than eyeballed: a translation that drops
     # a number, an address or a code fence is worse than none, because the reader

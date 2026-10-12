@@ -42,6 +42,7 @@ from database import (
     BlockedSite,
     Database,
     Inbound,
+    parse_secret_map,
     ServerNode,
     Setting,
     TunnelNode,
@@ -4876,9 +4877,17 @@ def _apply_restore_tx_locked(data: RestoreIn, request: Request, admin: Admin):
         # secrets straight into subscription URLs, so anything else would
         # corrupt client output. Missing/forged secrets are never imported:
         # the row gets freshly provisioned server-side credentials instead.
+        # parse_secret_map, not json.loads: a backup written since v1.15.27
+        # carries the bundle as a Fernet token, and json.loads raises on that.
+        # The old branch turned every such restore into a silent re-provision,
+        # invalidating the customer's existing configs at exactly the moment
+        # they need them. parse_secret_map also accepts the bare-JSON form, so
+        # backups from any earlier install keep working.
         try:
-            sec_map = json.loads(ru.secret_data) if (ru.secret_data or "") else None
-        except (ValueError, AttributeError):
+            sec_map = parse_secret_map(ru.secret_data) if (ru.secret_data or "") else None
+        except (ValueError, AttributeError, TypeError):
+            sec_map = None
+        if not isinstance(sec_map, dict) or not sec_map:
             sec_map = None
         # OpenVPN client certs are signed by the *source* host's CA, which is
         # not part of the backup. Keeping them on another host ships an .ovpn

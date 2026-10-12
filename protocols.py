@@ -2,6 +2,9 @@ import base64
 import hashlib
 import io
 import ipaddress
+import logging
+
+log = logging.getLogger(__name__)
 import json
 import re
 import secrets as pysecrets
@@ -291,7 +294,39 @@ def provision_map(protocols: list, username: str) -> dict:
 
 
 def serialize_secrets(secret_map: dict) -> str:
-    return json.dumps(secret_map, separators=(",", ":"))
+    """Store the credential bundle encrypted.
+
+    The bundle is the customer's UUID, their WireGuard private key, their
+    OpenVPN client keypair and the L2TP PSK. Written as bare JSON it was the
+    one thing in the database that had to stay secret and did not: read the
+    SQLite file and every customer's connection credentials are in cleartext.
+    Fernet under the panel's SECRET_KEY already protects the AI key, the
+    Telegram token and the REALITY private key, so this reuses the mechanism
+    rather than adding one.
+
+    parse_secret_map() (database.py) still reads the bare-JSON form, because
+    every row written before this change keeps that form until the customer is
+    re-provisioned or the row is rewritten. Restoring a backup written on an
+    older install therefore still works.
+
+    The key is derived per-process from SECRET_KEY at import time, so a
+    restored backup is only readable on a host that already holds this panel's
+    SECRET_KEY. That is the intended trade: the exported file no longer
+    carries working credentials on its own, which is the same property the
+    optional encrypted-backup mode has always had.
+    """
+    plain = json.dumps(secret_map, separators=(",", ":"))
+    try:
+        from security import encrypt_text
+
+        return encrypt_text(plain)
+    except Exception:  # noqa: BLE001
+        # Never lose a customer's credentials to a crypto failure: a row that
+        # cannot be encrypted must still be readable, or the subscription
+        # endpoint would 500 for everyone. Log-worthy, not silent-by-design:
+        # the plaintext fallback is strictly worse and is noted as such.
+        log.warning("secret bundle could not be encrypted; storing plaintext")
+        return plain
 
 
 def _v2ray_link(protocol: str, secret: str, username: str, index: int, srv: dict) -> str | None:

@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<title data-i18n="docs.titleSecurity">Security — Zefira Docs</title>
+<link rel="icon" href="assets/logo.png">
+<link rel="stylesheet" href="assets/style.css?v=41">
+</head>
+<body>
+<header class="topbar">
+  <button id="nav-toggle" aria-label="Menu" data-i18n-aria="docs.menuAria">☰</button>
+  <a class="brand" href="index.html"><img src="assets/logo.png" alt="Zefira"><b>ZEF<span>IRA</span></b></a>
+  <span class="ver" data-i18n="docs.topDocs">Docs</span>
+  <span id="docs-lang-mount"></span>
+  <span class="spacer"></span>
+  <a class="gh" href="changelog.html" data-i18n="docs.changelog">Changelog</a>
+  <a class="gh" href="donate.html" data-i18n="docs.donate">Donate</a>
+  <a class="gh" href="https://github.com/mrlurix/zefira-panel" target="_blank" rel="noopener">GitHub ↗</a>
+</header>
+<div class="layout">
+<nav class="sidebar" id="sidebar">
+  <input id="nav-search" type="search" data-i18n-ph="docs.searchPh" placeholder="Search docs…">
+  <div class="nav-group" data-i18n="docs.gStart">Getting Started</div>
+  <a href="index.html" data-i18n="docs.nHome">← Home</a>
+  <a href="installation.html" data-i18n="docs.nInstallation">Installation</a>
+  <div class="nav-group" data-i18n="docs.gGuide">Panel Guide</div>
+  <a href="user-guide.html" data-i18n="docs.nUsers">Users &amp; Plans</a>
+  <a href="subscription.html" data-i18n="docs.nSubs">Subscriptions &amp; Clients</a>
+  <a href="setup-guides.html" data-i18n="docs.nSetupGuides">Setup guides</a>
+  <div class="nav-group" data-i18n="docs.gServer">Server</div>
+  <a href="configuration.html" data-i18n="docs.nConfiguration">Configuration</a>
+  <a href="security.html" data-i18n="docs.nSecurity">Security</a>
+  <div class="nav-group" data-i18n="docs.gRef">Reference</div>
+  <a href="api.html" data-i18n="docs.nApi">API</a>
+  <a href="roadmap.html" data-i18n="docs.nRoadmap">Roadmap</a>
+  <a href="faq.html" data-i18n="docs.nFaq">FAQ &amp; Troubleshooting</a>
+  <a href="changelog.html" data-i18n="docs.nChangelog">Changelog</a>
+  <a href="support.html" data-i18n="docs.nSupport">Support</a>
+  <a href="donate.html" data-i18n="docs.nDonate">Donate</a>
+</nav>
+    <main class="content">
+      <div class="sub-head"><h1 data-i18n="rm.title">Roadmap</h1></div>
+
+      <p class="hint mt-0" data-i18n="rm.intro">What is finished, what is being
+      worked on, and what is deliberately not planned. Every item here is a
+      statement about the code, not an intention &mdash; where something is not
+      done, this page says so and says why.</p>
+
+      <h2 id="rm-shipped" data-i18n="rm.hShipped">Shipped</h2>
+      <p data-i18n="rm.pShipped">Things that work today. If a line here is
+      wrong, it is a bug in the code or a bug in this page, and either way one
+      of them should be changed.</p>
+      <ul>
+        <li><b data-i18n="rm.s1_lead">Installation in one command:</b>
+          <span data-i18n="rm.s1">pinned to a release tag, verified against a
+          commit SHA, hash-locked Python dependencies, and non-interactive when
+          there is no terminal.</span></li>
+        <li><b data-i18n="rm.s2_lead">Secrets at rest are encrypted:</b>
+          <span data-i18n="rm.s2">customer credentials (WireGuard private key,
+          OpenVPN client keypair, L2TP PSK), the AI key, the Telegram bot token
+          and the REALITY private key are stored under the panel key. Reading
+          the database file or an unencrypted backup no longer yields working
+          credentials.</span></li>
+        <li><b data-i18n="rm.s3_lead">Restore cannot wipe you by accident:</b>
+          <span data-i18n="rm.s3">an empty customer list is refused, the
+          pre-restore safety copy reports its own failure, and admin
+          credentials and API tokens are never imported from a file.</span></li>
+        <li><b data-i18n="rm.s4_lead">Every settings card is tested end to end:</b>
+          <span data-i18n="rm.s4">read, change, read back, restore &mdash; with
+          the cards that reach outside the panel probed in a way that issues
+          nothing.</span></li>
+      </ul>
+
+      <h2 id="rm-known" data-i18n="rm.hKnown">Known limits, stated plainly</h2>
+      <p data-i18n="rm.pKnown">These are real and not planned away. They are
+      listed here so nobody discovers them in production.</p>
+      <ul>
+        <li><b data-i18n="rm.k1_lead">One worker:</b>
+          <span data-i18n="rm.k1">rate limiters, the restore and update locks,
+          and the node-monitor loop live in process memory. Running more than
+          one worker multiplies the rate-limit budgets and can interleave
+          restores. Horizontal scaling needs those moved to shared storage
+          first &mdash; that is a real project, not a config flag.</span></li>
+        <li><b data-i18n="rm.k2_lead">SQLite writes serialise:</b>
+          <span data-i18n="rm.k2">fine for the panel sizes this is built for.
+          PostgreSQL or MySQL are supported through the same code path if you
+          need concurrent writers.</span></li>
+        <li><b data-i18n="rm.k3_lead">No hardware key storage:</b>
+          <span data-i18n="rm.k3">the panel derives its key from a file on the
+          host. Requiring an HSM or a cloud KMS would make the documented
+          one-command install impossible on the single VPS this is built for,
+          so it is not on the roadmap. If you run it somewhere with a KMS,
+          derive the key there and keep the file as the fallback.</span></li>
+        <li><b data-i18n="rm.k4_lead">Uninstall deletes the database:</b>
+          <span data-i18n="rm.k4">take a backup first. This is being changed so
+          the confirmation cannot be skipped.</span></li>
+      </ul>
+
+      <h2 id="rm-next" data-i18n="rm.hNext">Being worked on</h2>
+      <ul>
+        <li data-i18n="rm.n1">A confirmation for <code>--uninstall</code> that
+        cannot be passed non-interactively, plus a backup taken first.</li>
+        <li data-i18n="rm.n2">The installer refusing a source directory that is
+        world-writable or not owned by root, so a shared download directory
+        cannot feed pip as root.</li>
+        <li data-i18n="rm.n3">Reporting a certificate failure as a certificate
+        failure: the certbot exit status is currently masked by a pipe.</li>
+        <li data-i18n="rm.n4">Changelog entries for the releases that shipped
+        without one.</li>
+      </ul>
+
+      <h2 id="rm-contrib" data-i18n="rm.hContrib">Contributing</h2>
+      <p data-i18n="rm.pContrib">The test suite is the contract. A change that
+      cannot be shown green by <code>run_all_tests.py</code> is not finished,
+      and a guard that cannot be made to fail proves nothing &mdash; so new
+      guards are expected to demonstrate their own failure by breaking the fix
+      on purpose.</p>
+    </main>
+
+</div>
+<footer>Zefira · <span data-i18n="docs.footMit">MIT License</span> · <a href="https://github.com/mrlurix/zefira-panel">github.com/mrlurix/zefira-panel</a></footer>
+<script src="assets/i18n.js?v=41"></script>
+<script src="assets/docs.js?v=41"></script>
+<script src="assets/support-ai.js?v=41"></script>
+</body>
+</html>

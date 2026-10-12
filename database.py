@@ -189,6 +189,25 @@ class UserTemplate(Base):
 
 
 def parse_secret_map(secret_data: str) -> dict:
+    """Read the per-customer credential bundle, encrypted or not.
+
+    This column holds what a customer CANNOT regenerate: a WireGuard private
+    key, an OpenVPN client keypair, the L2TP PSK. It was stored as bare
+    json.dumps output, so anyone who could read the database file - a stolen
+    backup, a mis-set filesystem permission, an operator who pastes a
+    support file - read every customer's connection credentials at a glance.
+    Fernet with the panel's own SECRET_KEY now wraps it; the same key already
+    protects the AI key, the Telegram bot token and the REALITY private key,
+    so this is wiring up an existing mechanism, not inventing one.
+
+    BOTH shapes must keep working. A row written before this change is bare
+    JSON and stays that way until it is rewritten, and the panel will be
+    upgraded in place from any earlier version, so the plaintext branch is not
+    legacy to be deleted later - it is the format every existing row has. A
+    row that is neither shape returns {} rather than raising, because the
+    caller's correct response is to re-provision the customer, not to 500 the
+    subscription endpoint.
+    """
     if not secret_data:
         return {}
     if secret_data.startswith("{"):
@@ -198,7 +217,24 @@ def parse_secret_map(secret_data: str) -> dict:
             return json.loads(secret_data)
         except ValueError:
             return {}
-    return {}
+    # Encrypted since v1.15.27. decrypt_text returns "" on any failure -
+    # a rotated key, a truncated token, a value that was never ours - so this
+    # degrades to "re-provision", never to an exception.
+    try:
+        from security import decrypt_text
+
+        plain = decrypt_text(secret_data)
+    except Exception:  # noqa: BLE001 - an unreadable bundle is re-provisioned
+        return {}
+    if not plain:
+        return {}
+    import json
+
+    try:
+        parsed = json.loads(plain)
+    except ValueError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 class Setting(Base):
