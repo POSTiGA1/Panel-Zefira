@@ -547,7 +547,22 @@ class RestoreUserIn(BaseModel):
     note: str = Field(default="", max_length=200)
     volume_gb: float = Field(ge=0, le=100000)
     used_gb: float = Field(default=0, ge=0, le=1000000)
-    token: str = Field(pattern=r"^[a-f0-9]{32}\z")
+    token: str = Field(min_length=32, max_length=200)
+    # Since v1.15.29 an exported token is a Fernet blob under the panel key, so
+    # the old ^[a-f0-9]{32}$ pattern rejected every customer in a backup taken
+    # by a current panel - the restore reported them as "skipped" and silently
+    # re-provisioned them, which is the same class of data loss the empty-restore
+    # guard exists to prevent. Both shapes are accepted: the bare hex an older
+    # panel exported, and the ciphertext a current one does. The length bound
+    # still applies, so a crafted file cannot push an unbounded string through.
+    @field_validator("token")
+    @classmethod
+    def _token_shape(cls, v: str) -> str:
+        if re.fullmatch(r"[a-f0-9]{32}", v):
+            return v
+        if re.fullmatch(r"[A-Za-z0-9_-]{80,}={0,2}", v):
+            return v
+        raise ValueError("token is neither a 32-hex token nor a Fernet blob")
     secret_data: str = Field(default="", max_length=40000)
     is_active: bool = True
     device_limit: Optional[StrictInt] = Field(default=None, ge=1, le=1000)

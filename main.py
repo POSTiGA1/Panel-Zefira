@@ -43,6 +43,9 @@ from database import (
     Database,
     Inbound,
     parse_secret_map,
+    parse_token,
+    seal_token,
+    token_digest,
     ServerNode,
     Setting,
     TunnelNode,
@@ -3309,7 +3312,7 @@ def _run_ai_tool(tool: str, args: dict, admin: Admin, request: Request, ip: str)
                 f"{data.username} [{','.join(proto_list)}] via AI by {admin.username}",
                 ip,
             )
-            stok = user.token
+            stok = parse_token(user.token)
             try:
                 _commit(s)
             except IntegrityError:
@@ -4957,7 +4960,14 @@ def _apply_restore_tx_locked(data: RestoreIn, request: Request, admin: Admin):
                 volume_gb=_vol,
                 device_limit=ru.device_limit,
                 used_gb=_used,
-                token=ru.token,
+                # parse_token, not the raw field: since v1.15.29 an exported token is a
+                # Fernet blob under the panel key, while a backup taken by an
+                # older panel still carries bare hex. Both must restore, or a
+                # restore would silently re-provision every customer and break
+                # their working configs. The write hook re-seals it and sets the
+                # lookup digest. An unreadable value is re-issued rather than
+                # stored empty - empty would also collide on the unique index.
+                token=parse_token(ru.token) or secrets.token_hex(16),
                 secret_data=secret_json,
                 is_active=_rbool(ru.is_active, True),
                 start_on_first_use=sofu,
@@ -6224,7 +6234,7 @@ def api_user_qr(user_id: int, request: Request, admin: Admin = Depends(require_a
         raise HTTPException(status_code=429, detail="Too many QR requests, wait a moment")
     with db.s() as s:
         user = _get_user_or_404(s, user_id)
-        token = user.token
+        token = parse_token(user.token)
     from config import SUBSCRIPTION_PATH as _SUB_PATH
 
     base = public_base_url(request)
@@ -6624,7 +6634,11 @@ def _subscription_inner(token: str, request: Request):
         t in ua for t in ("clash", "mihomo", "stash", "meta")
     )
     with db.s() as s:
-        user = s.scalar(select(VpnUser).where(VpnUser.token == token))
+        # Indexed lookup by HMAC, not by the stored value. The token column
+        # holds ciphertext, so equality against it cannot work; and equality
+        # against the plaintext would put the credential back in the database.
+        user = s.scalar(select(VpnUser).where(
+            VpnUser.token_sha == token_digest(token)))
         if not user or not user.is_active:
             raise HTTPException(status_code=404, detail="Not Found")
         # Browser requests get the human dashboard; VPN clients get bytes.

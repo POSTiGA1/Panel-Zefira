@@ -90,6 +90,7 @@ OFFLINE_SUITES = [
     # SQLite file - or an unencrypted backup - read every customer credential.
     ("secret_at_rest_test.py", "customer secrets encrypted at rest"),
     ("security_hardening_test.py", "audit hardening: secret disclosure budgets, fail-closed scopes"),
+    ("subscription_token_test.py", "the subscription bearer token is not readable at rest"),
     ("installer_guard_test.py", "installer symlink + banner guards"),
     # The four READMEs, compared rather than eyeballed: a translation that drops
     # a number, an address or a code fence is worse than none, because the reader

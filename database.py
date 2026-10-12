@@ -1,3 +1,5 @@
+import re
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,9 +14,61 @@ from sqlalchemy import (
     create_engine,
     text,
 )
+from sqlalchemy import event
 from sqlalchemy.orm import Session, declarative_base
 
 Base = declarative_base()
+
+# A subscription token is exactly 32 lowercase hex characters (secrets.token_hex(16)).
+# Anything else in the token column is a Fernet blob, which is how the two shapes
+# are told apart - the same trick parse_secret_map uses for the credential bundle.
+TOKEN_PLAIN_RE = re.compile(r"\A[a-f0-9]{32}\Z")
+
+
+def token_is_sealed(value: str | None) -> bool:
+    """True when the stored value is encrypted rather than bare hex."""
+    return bool(value) and TOKEN_PLAIN_RE.fullmatch(value) is None
+
+
+def token_digest(token: str) -> str:
+    """The indexed lookup key for a subscription token.
+
+    HMAC, not a bare SHA-256: the input space is only 128 bits of a CSPRNG, but
+    an HMAC also means a stolen token_sha column cannot be attacked with a
+    precomputed table the way a plain hash of a low-entropy value could be.
+    """
+    import hashlib
+    import hmac
+
+    from config import SECRET_KEY
+
+    return hmac.new(SECRET_KEY.encode("utf-8"), token.encode("utf-8"),
+                    hashlib.sha256).hexdigest()
+
+
+def seal_token(plain: str) -> tuple[str, str]:
+    """-> (ciphertext for the token column, digest for the lookup index)."""
+    from security import encrypt_text
+
+    return encrypt_text(plain), token_digest(plain)
+
+
+def parse_token(value: str | None) -> str:
+    """The plaintext token, whether it is stored bare or encrypted.
+
+    Both shapes must keep working: a row written before this change is bare hex
+    and stays that way until it is rewritten, and a backup exported by an older
+    panel carries the bare form too. Unreadable input yields "", because the
+    correct response is to re-provision the customer, not to 500 the
+    subscription endpoint.
+    """
+    if not value:
+        return ""
+    if TOKEN_PLAIN_RE.fullmatch(value):
+        return value
+    from security import decrypt_text
+
+    return decrypt_text(value)
 
 
 def utcnow() -> datetime:
@@ -75,7 +129,14 @@ class VpnUser(Base):
     note = Column(Text, nullable=False, default="")
     volume_gb = Column(Float, nullable=False)
     used_gb = Column(Float, nullable=False, default=0.0)
-    token = Column(String(64), unique=True, nullable=False, index=True)
+    token = Column(Text, unique=True, nullable=False, index=True)
+    # Indexed lookup key for the subscription token. The token itself is stored
+    # encrypted (see seal_token), so the database file cannot be searched with
+    # the value a customer actually presents - but /sub/{token} has to stay an
+    # indexed equality lookup, not a decrypt-every-row scan. This is that
+    # index: an HMAC under the panel key, so it cannot be brute-forced back
+    # into a token without the key either.
+    token_sha = Column(String(64), unique=True, nullable=True, index=True)
     secret_data = Column(Text, nullable=False, default="")
     is_active = Column(Boolean, nullable=False, default=True)
     start_on_first_use = Column(Boolean, nullable=False, default=False)
@@ -101,7 +162,7 @@ class VpnUser(Base):
             "note": safe_text(self.note),
             "volume_gb": round(self.volume_gb or 0, 4),
             "used_gb": round(self.used_gb or 0, 4),
-            "token": self.token,
+            "token": parse_token(self.token),
             "is_active": self.is_active,
             "device_limit": self.device_limit,
             "start_on_first_use": self.start_on_first_use,
@@ -148,6 +209,12 @@ class VpnUser(Base):
             "note": safe_text(self.note),
             "volume_gb": self.volume_gb,
             "used_gb": self.used_gb,
+            # The RAW column, deliberately. This is the export, and the token
+            # column now holds a Fernet blob - so an unencrypted backup carries
+            # ciphertext, exactly like secret_data beside it, and cannot be
+            # replayed as a working subscription URL by itself. Restore calls
+            # parse_token, which accepts this shape and the bare-hex shape an
+            # older panel exported.
             "token": safe_text(self.token),
             "secret_data": safe_text(self.secret_data),
             "is_active": self.is_active,
@@ -235,6 +302,20 @@ def parse_secret_map(secret_data: str) -> dict:
     except ValueError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+@event.listens_for(VpnUser, "before_insert")
+# One hook rather than edits at the four call sites that mint a token, because
+# that is what makes the rotation paths safe too: "reset token" assigns a fresh
+# plaintext value and the old digest would otherwise survive beside it, so
+# /sub/{new token} would 404 while the database still held the old index. Any
+# bare token is re-sealed and re-digested here; an already-sealed one is left
+# alone, so writing a row does not churn its ciphertext.
+@event.listens_for(VpnUser, "before_insert")
+@event.listens_for(VpnUser, "before_update")
+def _seal_token_on_write(mapper, connection, target):
+    if target.token and not token_is_sealed(target.token):
+        target.token, target.token_sha = seal_token(target.token)
 
 
 class Setting(Base):
@@ -492,6 +573,43 @@ def _migration_steps(dialect_name):
         conn.execute(text("UPDATE vpn_users SET protocols = protocol "
                           "WHERE protocols IS NULL OR protocols = ''"))
 
+    def _token_seal(self, conn):
+        """Encrypt every subscription token still stored in the clear.
+
+        The token column held the bearer credential itself, so reading
+        instance/zefira.db - or an unencrypted backup exported from it - handed
+        over working VPN access for every customer at once. Measured before
+        this ran: a token read straight out of the file answered /sub/{token}
+        with 200 and the customer's WireGuard private key, no credentials of any
+        kind.
+
+        token_sha is the backfill marker: a row whose digest is still NULL was
+        written before the column existed and still holds bare hex. Each is
+        sealed and given its digest here, so an existing panel upgrades in place
+        and nobody's subscription URL changes. If a single row cannot be sealed
+        the transaction is left to fail loudly rather than half-migrated - a
+        row that stayed bare would look migrated while still leaking.
+        """
+        rows = conn.execute(
+            text("SELECT id, token FROM vpn_users WHERE token_sha IS NULL")
+        ).fetchall()
+        for rid, raw in rows:
+            if not raw:
+                conn.execute(text("UPDATE vpn_users SET token_sha = :d "
+                                  "WHERE id = :i"),
+                             {"d": token_digest(secrets.token_hex(16)), "i": rid})
+                continue
+            plain = parse_token(raw)
+            if not plain:
+                # Encrypted under a key this panel does not hold: leave it
+                # alone rather than overwrite the only copy of the value.
+                continue
+            cipher, digest = seal_token(plain)
+            conn.execute(text("UPDATE vpn_users SET token = :t, token_sha = :d "
+                              "WHERE id = :i"),
+                         {"t": cipher, "d": digest, "i": rid})
+            self._tokens_sealed = True
+
     return [
         _drop("admins", "totp_enabled"),
         _drop("admins", "totp_secret"),
@@ -504,6 +622,7 @@ def _migration_steps(dialect_name):
         _add("vpn_users", "device_limit", "device_limit INTEGER"),
         _add("vpn_users", "last_fetch_at", f"last_fetch_at {dt_ddl}"),
         _add("vpn_users", "last_fetch_ip", "last_fetch_ip VARCHAR(64)"),
+        _add("vpn_users", "token_sha", "token_sha VARCHAR(64)"),
         _add("inbounds", "node_id", "node_id INTEGER"),
         _add("user_templates", "device_limit", "device_limit INTEGER"),
         _add("api_tokens", "scopes", "scopes VARCHAR(16) NOT NULL DEFAULT 'full'"),
@@ -512,6 +631,7 @@ def _migration_steps(dialect_name):
         _blank_backfill("protocols"),
         _scopes_backfill,
         _protocols_backfill,
+        _token_seal,
     ]
 
 class Database:
@@ -544,6 +664,8 @@ class Database:
                 # failing fast with "database is locked".
                 cursor.execute("PRAGMA busy_timeout=30000")
                 cursor.close()
+
+    _tokens_sealed = False
 
     def init(self) -> None:
         Base.metadata.create_all(self.engine)
@@ -587,6 +709,44 @@ class Database:
         for _step in _migration_steps(self.engine.dialect.name):
             with self.engine.begin() as _conn:
                 _step(self, _conn)
+
+        # Encrypting a column does not erase the old bytes. SQLite frees the
+        # pages the plaintext occupied and leaves them on the freelist, so a
+        # stolen zefira.db still contained every pre-upgrade subscription token
+        # in raw form - measured, not assumed: 242 of 330 pages still held the
+        # bytes after the rewrite while zero rows referenced them. VACUUM
+        # rebuilds the file, which is the only thing that actually removes them.
+        #
+        # Only when the token step really sealed something, so a normal boot
+        # never pays for it, and never inside a transaction (SQLite refuses).
+        if self._tokens_sealed and not getattr(self, "_external_db", False):
+            try:
+                # Deliberately NOT through the engine. An earlier version used
+                # engine.connect() with isolation_level=AUTOCOMMIT and the
+                # bytes were still there afterwards - measured, with the row
+                # holding ciphertext, the freelist empty and the plaintext
+                # still readable in the file. A plain sqlite3 connection in
+                # autocommit mode is unambiguous about transaction boundaries,
+                # and this runs once, at upgrade, before serving anything.
+                self.engine.dispose()
+                import sqlite3
+
+                _con = sqlite3.connect(self.engine.url.database,
+                                       isolation_level=None)
+                try:
+                    _con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    _con.execute("VACUUM")
+                    _con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                finally:
+                    _con.close()
+            except Exception as exc:
+                # Not fatal: the tokens are encrypted from here on either way,
+                # and refusing to start over a cosmetic VACUUM would be worse.
+                import logging
+                logging.getLogger(__name__).warning(
+                    "post-migration VACUUM skipped: %s", exc)
+            finally:
+                self._tokens_sealed = False
 
     @staticmethod
     def _drop_column(conn, table: str, name: str) -> None:
