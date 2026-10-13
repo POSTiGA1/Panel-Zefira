@@ -4400,6 +4400,7 @@ def _get_node_or_404(s, node_id: int) -> TunnelNode:
 
 @app.post("/api/nodes/{node_id}/reveal-token")
 def api_node_reveal_token(node_id: int, request: Request, admin: Admin = Depends(require_admin)):
+    log.info("node token revealed: id=%s by %s", node_id, admin.username)
     if not sensitive_limiter.hit(f"nodereveal|{admin.id}"):
         raise HTTPException(status_code=429, detail="Too many attempts, wait a few minutes")
     with db.s() as s:
@@ -4456,6 +4457,7 @@ def api_node_guide(node_id: int, request: Request, admin: Admin = Depends(requir
     # budget, applied to every route that hands out that secret.
     if not sensitive_limiter.hit(f"nodereveal|{admin.id}"):
         raise HTTPException(status_code=429, detail="Too many attempts, wait a few minutes")
+    log.info("node guide served: id=%s by %s", node_id, admin.username)
     with db.s() as s:
         node = _get_node_or_404(s, node_id)
         token = decrypt_text(node.token_enc)
@@ -4481,6 +4483,7 @@ def api_node_guide(node_id: int, request: Request, admin: Admin = Depends(requir
 def api_node_check(node_id: int, request: Request, admin: Admin = Depends(require_admin)):
     if not probe_limiter.hit(f"probe|{admin.id}"):
         raise HTTPException(status_code=429, detail="Too many checks, wait a minute")
+    log.info("node check requested: id=%s by %s", node_id, admin.username)
     with db.s() as s:
         node = _get_node_or_404(s, node_id)
         host = node.iran_ip

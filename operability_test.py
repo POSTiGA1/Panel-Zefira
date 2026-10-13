@@ -119,6 +119,24 @@ def correlation():
           "_REQ_ID_RE" in src or "REQ_ID_RE" in src,
           "an attacker could inject newlines into the log through it")
 
+    # The node routes that disclose a secret or probe a fleet member wrote no
+    # log line at all. The audit log answers "who"; nothing answered "when,
+    # from where, or did the node actually respond", which is exactly what a
+    # production failure on a node fleet needs.
+    for fn, what in (("api_node_reveal_token", "discloses the tunnel token"),
+                     ("api_node_guide", "serves the same token"),
+                     ("api_node_check", "probes whether the node answers")):
+        i = src.index("def " + fn)
+        nxt = re.search(r"\n@app\.", src[i:])
+        body = src[i:i + (nxt.start() if nxt else 3000)]
+        check("%s is logged, not only audited (%s)" % (fn, what),
+              re.search(r'log\.info\(\s*"node ', body) is not None,
+              "a production failure here would leave nothing to grep")
+
+    check("no decrypted secret is ever written to the log",
+          re.search(r"log\.\w+\([^)]*decrypt_text\(", src) is None,
+          "the tunnel token would end up in the journal")
+
 
 # --------------------------------------------------------------------------
 # 3. Type hints where they matter: the boundary helpers main.py exports.
@@ -167,6 +185,9 @@ MUTATIONS = [
         'response.headers["X-Request-Id"]', "# mutated: not echoed")),
     ("untrusted rid sanitised", "sanitise", lambda s: s.replace(
         "_REQ_ID_RE", "# mutated: no validation")),
+    ("node disclosure routes logged", "node", lambda s: re.sub(
+        r'    log\.info\("node (?:token revealed|guide served|check requested)',
+        '    # mutated: not logged', s)),
 ]
 
 
@@ -206,6 +227,13 @@ def _child():
         bad.append(("guard", "the multi-worker refusal is gone"))
     if 'response.headers["X-Request-Id"]' not in src:
         bad.append(("corr", "the correlation id is not echoed"))
+    for _fn in ("api_node_reveal_token", "api_node_guide", "api_node_check"):
+        _i = src.index("def " + _fn)
+        _nxt = re.search(r"\n@app\.", src[_i:])
+        _body = src[_i:_i + (_nxt.start() if _nxt else 3000)]
+        if not re.search(r'log\.info\(\s*"node ', _body):
+            bad.append(("node", "%s is no longer logged" % _fn))
+            break
     if "_REQ_ID_RE" not in src:
         bad.append(("sanitise", "the rid is no longer validated"))
     for key, why in bad:
