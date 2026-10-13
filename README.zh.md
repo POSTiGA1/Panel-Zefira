@@ -106,7 +106,9 @@ python -m uvicorn main:app --host 127.0.0.1 --port 8000 --no-server-header --no-
 
 首次运行会把管理员用户名/密码写入 `instance/first-run-credentials.txt`（权限 600），并且只打印路径。如果你在启动前设置了 `ZEFIRA_ADMIN_PASSWORD`，则改用该值。
 
-> **只运行一个 worker。** 速率限制器、restore/update 锁、节点监控循环和设置缓存都存在于进程内存中——`--workers N` 会成倍放大限流额度，并可能让 restore 相互交错。要扩容请加机器，而不是加 worker。
+> **请严格只运行一个 worker。** 限流器、还原/更新锁、节点监控循环和设置缓存都在进程内存中——`--workers N` 会成倍放大限流额度并可能让还原交错。请用更多机器扩容，而不是更多 worker。
+>
+> 这一点是**强制执行**的，不只是建议：面板在启动时读取 `WEB_CONCURRENCY`，超过一个 worker 就**拒绝启动**，并说明会出什么问题。若你确实已把这些状态移入共享存储，设置 `ZEFIRA_ALLOW_MULTI_WORKER=1` 以确认——并会记录一条警告：若限流器不共享，该面板将失去保护。
 
 默认登录地址：`http://YOUR_SERVER_IP:8000`
 

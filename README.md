@@ -90,8 +90,9 @@ First run writes the admin username/password to
 `instance/first-run-credentials.txt` (mode 600) and prints only the path. If
 you set `ZEFIRA_ADMIN_PASSWORD` before starting, it will use that instead.
 
-> **Run exactly one worker.** Rate limiters, the restore/update locks, the node monitor loop and the settings cache live in process memory — `--workers N` multiplies rate-limit budgets and can interleave restores. Scale with more machines, not more workers.
-
+> **Run exactly one worker.** Rate limiters, the restore/update locks, the node monitor loop and the settings cache live in process memory - `--workers N` multiplies rate-limit budgets and can interleave restores. Scale with more machines, not more workers.
+>
+> This is enforced, not just advised: the panel reads `WEB_CONCURRENCY` at startup and **refuses to start** above one worker, naming what breaks. If you have genuinely moved that state into shared storage, `ZEFIRA_ALLOW_MULTI_WORKER=1` acknowledges it - and logs a warning that the panel is unprotected if the limiters are not shared.
 Default login: `http://YOUR_SERVER_IP:8000`
 
 ### What you get
@@ -146,8 +147,8 @@ backups or full-disk encryption, and see [SECURITY.md](SECURITY.md).
 The panel also accepts `DATABASE_URL`, so PostgreSQL and MySQL work through the
 same code path if you need concurrent writers.
 
-There are 35 test suites. 10 hit the running panel from the outside and
-25 are static guards that need nothing running. One command runs all 35:
+There are 36 test suites. 10 hit the running panel from the outside and
+26 are static guards that need nothing running. One command runs all 35:
 
 ```bash
 python run_all_tests.py http://127.0.0.1:8000 admin YOURPASS

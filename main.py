@@ -631,7 +631,7 @@ def _rbool(value: object, default: bool = False) -> bool:
     return default
 
 
-def _rint(value: object, lo: int, hi: int):
+def _rint(value: object, lo: int, hi: int) -> int:
     """Strict int for backup payloads: bools, fractional floats, junk -> None."""
     if value is None or isinstance(value, bool):
         return None
@@ -646,7 +646,7 @@ def _rint(value: object, lo: int, hi: int):
     return out if lo <= out <= hi else None
 
 
-def _rfloat(value: object, lo: float, hi: float):
+def _rfloat(value: object, lo: float, hi: float) -> float:
     """Strict float for backup payloads (rejects bools and junk)."""
     if value is None or isinstance(value, bool):
         return None
@@ -659,7 +659,7 @@ def _rfloat(value: object, lo: float, hi: float):
     return out if lo <= out <= hi else None
 
 
-def _rusdt(value: object):
+def _rusdt(value: object) -> datetime | None:
     """ISO timestamp -> naive UTC, or None.
 
     datetime.fromisoformat(...).replace(tzinfo=None) *drops* an offset
@@ -961,7 +961,7 @@ def build_theme_css(vals: dict) -> str:
     )
 
 
-def cached_setting(key: str, ttl: float = 15.0):
+def cached_setting(key: str, ttl: float = 15.0) -> str:
     now = time_mod.monotonic()
     ent = _settings_cache.get(key)
     if ent and now - ent[1] < ttl:
@@ -1274,6 +1274,52 @@ def notify_async(fmt: str, *untrusted: object) -> None:
         log.warning("notify enqueue failed (dropped): %s", e)
 
 
+def _enforce_single_worker() -> None:
+    """Refuse to start under multiple uvicorn workers.
+
+    This does not add multi-worker support; it makes the existing constraint
+    loud instead of silent. The rate limiters, the restore and update locks,
+    the settings cache and the node-monitor loop are all process-local, so
+    `--workers 4` does not scale the panel - it quadruples every limit budget,
+    lets two restores interleave, and forks a second monitor loop that writes
+    the same rows. The systemd unit runs one worker and the README says so, but
+    documentation is not a control: an operator who adds --workers to "use the
+    other cores" gets data corruption and a rate limit that protects nothing.
+
+    Failing at startup is the honest outcome. An operator who has actually put
+    the shared state in Redis can set ZEFIRA_ALLOW_MULTI_WORKER=1 and take on
+    the reasoning themselves; nobody else can turn it on by accident.
+    """
+    raw = (os.environ.get("WEB_CONCURRENCY") or "").strip()
+    if not raw:
+        return
+    try:
+        workers = int(raw)
+    except ValueError:
+        log.warning("WEB_CONCURRENCY=%r is not a number; ignoring it", raw)
+        return
+    if workers <= 1:
+        return
+    if (os.environ.get("ZEFIRA_ALLOW_MULTI_WORKER") or "").strip() in ("1", "true", "yes"):
+        log.warning(
+            "running with WEB_CONCURRENCY=%s because "
+            "ZEFIRA_ALLOW_MULTI_WORKER is set. Rate limit budgets are per "
+            "process: if the limiters are not shared, this panel is "
+            "unprotected and restores can interleave.", workers)
+        return
+    raise RuntimeError(
+        "Refusing to start with WEB_CONCURRENCY=%d. This panel keeps its rate "
+        "limiters, its restore and update locks, its settings cache and its "
+        "node monitor in process memory, so a second worker does not share "
+        "them: limits multiply, restores interleave, and the monitor loop "
+        "forks. Scale with more machines, not more workers. If you have moved "
+        "that state into shared storage, set ZEFIRA_ALLOW_MULTI_WORKER=1 to "
+        "acknowledge it." % workers)
+
+
+_enforce_single_worker()
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     db.init()
@@ -1545,12 +1591,36 @@ def _subscription_path_prefix() -> str:
     return "" if p == "/sub" else p
 
 
+# A request id is a correlation key, so it has to survive being quoted back in
+# a support ticket while still being safe to write to a log line. Only hex and
+# dashes, bounded in length: an unchecked value here would let a client inject
+# newlines into the journal or forge another request's id.
+_REQ_ID_RE = re.compile(r"\A[A-Za-z0-9_-]{8,64}\Z")
+
+
+def _request_id(request: Request) -> str:
+    """The id for this request: the client's if it is well-formed, else ours.
+
+    Echoed on the response and written into the access log, so "what happened
+    at 14:03 for this customer" becomes one grep instead of a correlation
+    argument across every subsystem.
+    """
+    supplied = (request.headers.get("X-Request-Id") or "").strip()
+    if supplied and _REQ_ID_RE.match(supplied):
+        return supplied
+    return secrets.token_hex(8)
+
+
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
+    rid = _request_id(request)
+    request.state.request_id = rid
+    _t0 = time_mod.perf_counter()
     response = await call_next(request)
     for key, value in SECURITY_HEADERS.items():
         response.headers.setdefault(key, value)
     response.headers["Content-Security-Policy"] = CSP
+    response.headers["X-Request-Id"] = rid
     # The custom SUBSCRIPTION_PATH (e.g. /vpn) is served by the same handler as
     # /sub, so it needs the same no-store: those responses carry the customer's
     # bearer links and private configs and must never sit in a shared cache.
@@ -1563,6 +1633,12 @@ async def security_headers_middleware(request: Request, call_next):
         response.headers.setdefault("Cache-Control", "no-store")
     if request_scheme(request) == "https":
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    # One line per request, with the id, the status and how long it took. The
+    # panel has no metric exporter and no trace backend, so this line is the
+    # only thing that ties a slow response back to the code that produced it.
+    log.info("rid=%s %s %s -> %s %.0fms", rid, request.method,
+             request.url.path, response.status_code,
+             (time_mod.perf_counter() - _t0) * 1000.0)
     return response
 
 
