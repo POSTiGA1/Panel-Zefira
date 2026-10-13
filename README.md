@@ -146,22 +146,59 @@ backups or full-disk encryption, and see [SECURITY.md](SECURITY.md).
 The panel also accepts `DATABASE_URL`, so PostgreSQL and MySQL work through the
 same code path if you need concurrent writers.
 
-There are thirty-five test suites that hit the running panel from the outside. Start
-the panel, then run each one (restart the panel between suites):
+There are 35 test suites. 10 hit the running panel from the outside and
+25 are static guards that need nothing running. One command runs all 35:
 
 ```bash
-python security_test.py    http://127.0.0.1:8000 admin YOURPASS   # abuse/defense
-python functional_test.py  http://127.0.0.1:8000 admin YOURPASS   # end-to-end flows
-python feature_test.py     http://127.0.0.1:8000 admin YOURPASS   # feature coverage
-python attack_test.py      http://127.0.0.1:8000 admin YOURPASS   # live attack probes
-python attack_quota_test.py http://127.0.0.1:8000 admin YOURPASS # quota/schema boundaries
-python attack_paths_test.py http://127.0.0.1:8000 admin YOURPASS # operator paths
-python frontend_bugs_test.py http://127.0.0.1:8000 admin YOURPASS # front-end regressions
-python panel_sections_test.py http://127.0.0.1:8000 admin YOURPASS # panel sections
-python security_audit_test.py http://127.0.0.1:8000 admin YOURPASS # security audit
+python run_all_tests.py http://127.0.0.1:8000 admin YOURPASS
 ```
 
-`feature_test.py` walks all 62 API routes across the 10 panel sections and
+Or run them one at a time, restarting the panel between suites:
+
+```bash
+python feature_test.py        http://127.0.0.1:8000 admin YOURPASS   # feature coverage
+python security_test.py       http://127.0.0.1:8000 admin YOURPASS   # security / abuse
+python functional_test.py     http://127.0.0.1:8000 admin YOURPASS   # functional flows
+python attack_test.py         http://127.0.0.1:8000 admin YOURPASS   # live attack probes
+python attack_quota_test.py   http://127.0.0.1:8000 admin YOURPASS   # quota / schema boundaries
+python attack_paths_test.py   http://127.0.0.1:8000 admin YOURPASS   # operator paths / restore
+python frontend_bugs_test.py  http://127.0.0.1:8000 admin YOURPASS   # front-end regressions
+python panel_sections_test.py http://127.0.0.1:8000 admin YOURPASS   # panel sections end-to-end
+python settings_cards_test.py http://127.0.0.1:8000 admin YOURPASS   # every settings card end-to-end
+python security_audit_test.py http://127.0.0.1:8000 admin YOURPASS   # security audit round 1
+```
+
+These need no running panel - they are static
+guards over the installer, the docs and the release notes:
+```bash
+python installer_test.py                                   # installer CLI
+python dashboard_link_test.py                              # customer dashboard link
+python proxy_trust_test.py                                 # proxy trust + client IP
+python link_encoding_test.py                               # share-link remark encoding
+python update_guard_test.py                                # updater intrusion guard
+python migration_guard_test.py                              # schema migration steps
+python env_symlink_guard_test.py                              # installer env symlink
+python bump_assets_guard_test.py                              # docs asset bump inputs
+python installer_unit_test.py                              # installer heredoc safety
+python secret_at_rest_test.py                              # customer secrets encrypted at rest
+python security_hardening_test.py                              # audit hardening: secret disclosure budgets, fail-closed scopes
+python subscription_token_test.py                              # the subscription bearer token is not readable at rest
+python installer_guard_test.py                              # installer symlink + banner guards
+python readme_i18n_test.py                                 # README translations
+python telegram_hint_test.py                               # telegram error hints
+python api_scope_test.py                                   # API token scope control
+python settings_guard_test.py                              # settings + download guards
+python restore_guard_test.py                               # restore + snapshot + token cap guards
+python harness_login_test.py                               # harness can reach its admin
+python release_notes_test.py                               # assistant not stale
+python settings_groups_test.py                              # settings grouped, nothing lost
+python i18n_test.py                                        # docs i18n dictionaries
+python docs_coverage_test.py                               # docs cover the panel
+python i18n_dict_check.js                                  # docs i18n coverage
+python i18n_render_check.js                                # docs i18n renderer safety
+```
+
+`feature_test.py` walks the panel's 67 API routes across its 11 sections and
 asserts each capability is actually usable (real links in a subscription, a
 decodable QR, a working config archive, the bot-scope matrix, backup/restore
 round-trips…), not merely reachable. `attack_test.py` fires the hostile
