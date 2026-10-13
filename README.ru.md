@@ -25,6 +25,41 @@
 
 Одной командой:
 
+Всего 35 наборов тестов: 10 бьют по работающей панели снаружи, 25 — статические проверки, которым ничего не нужно. Одна команда запускает все 35:
+
+```
+
+Им ничего не нужно — статические проверки установщика, документации и заметок о релизе:
+```bash
+python installer_test.py                                       # installer CLI
+python dashboard_link_test.py                                  # customer dashboard link
+python proxy_trust_test.py                                     # proxy trust + client IP
+python link_encoding_test.py                                   # share-link remark encoding
+python update_guard_test.py                                    # updater intrusion guard
+python migration_guard_test.py                                 # schema migration steps
+python env_symlink_guard_test.py                               # installer env symlink
+python bump_assets_guard_test.py                               # docs asset bump inputs
+python installer_unit_test.py                                  # installer heredoc safety
+python secret_at_rest_test.py                                  # customer secrets encrypted at rest
+python security_hardening_test.py                              # audit hardening: secret disclosure budgets, fail-closed scopes
+python subscription_token_test.py                              # the subscription bearer token is not readable at rest
+python installer_guard_test.py                                 # installer symlink + banner guards
+python readme_i18n_test.py                                     # README translations
+python telegram_hint_test.py                                   # telegram error hints
+python api_scope_test.py                                       # API token scope control
+python settings_guard_test.py                                  # settings + download guards
+python restore_guard_test.py                                   # restore + snapshot + token cap guards
+python harness_login_test.py                                   # harness can reach its admin
+python release_notes_test.py                                   # assistant not stale
+python settings_groups_test.py                                 # settings grouped, nothing lost
+python i18n_test.py                                            # docs i18n dictionaries
+python docs_coverage_test.py                                   # docs cover the panel
+python i18n_dict_check.js                                      # docs i18n coverage
+python i18n_render_check.js                                    # docs i18n renderer safety
+```bash
+python run_all_tests.py http://127.0.0.1:8000 admin YOURPASS
+```
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mrlurix/zefira-panel/main/install.sh | sudo bash
 ```
@@ -112,7 +147,7 @@ python -m uvicorn main:app --host 127.0.0.1 --port 8000 --no-server-header --no-
 
 Эти наборы бьют по работающей панели снаружи. Запустите панель, затем выполняйте их по одному (перезапуская панель между наборами). Либо все сразу: `python run_all_tests.py admin YOURPASS`. Наборы не зависят от порядка и в конце возвращают панель к заводским настройкам.
 
-**Онлайн-наборы (9)** — требуют работающей панели:
+**Онлайн-наборы (10)** — требуют работающей панели:
 
 ```bash
 python security_test.py      http://127.0.0.1:8000 admin YOURPASS  # злоупотребления/защита
@@ -128,7 +163,7 @@ python security_audit_test.py http://127.0.0.1:8000 admin YOURPASS  # аудит
 
 `feature_test.py` обходит все 77 маршрутов API в 11 разделах панели и утверждает, что каждая возможность **действительно работает** (реальные ссылки в подписке, декодируемый QR, рабочий архив конфигов, матрица scope бота, циклы бэкап/восстановление…), а не просто доступна. `attack_test.py` сам выпускает враждебный трафик: подмена заголовков, сохранённый XSS, обход пути, чрезмерно большие и глубоко вложенные тела, трюки с Unicode/кодировкой, timing oracle, лавина входов, попытки вытеснить ограничитель и полная матрица аутентификации.
 
-**Без сервера (9 наборов на Python)** — выполняют поставляемый код, а не читают его, потому что каждый дефект ниже прошёл ревью на уровне исходников:
+**Без сервера (10 наборов на Python)** — выполняют поставляемый код, а не читают его, потому что каждый дефект ниже прошёл ревью на уровне исходников:
 
 ```bash
 python installer_test.py          # гарантии установщика, статическими проверками
