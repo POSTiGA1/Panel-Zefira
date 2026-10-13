@@ -20,6 +20,8 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import quote as urlquote
 from urllib.parse import urlparse
 
+from config import INSTANCE_DIR
+
 import psutil
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
@@ -3607,7 +3609,6 @@ def _external_db_snapshot(stamp: str) -> str | None:
         url = (os.environ.get("DATABASE_URL", "") or "").strip()
         if not url:
             return None
-        from config import INSTANCE_DIR
 
         dest = INSTANCE_DIR / f"db.pre-restore-{stamp}.dump"
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -4923,7 +4924,6 @@ def _snapshot_db_before_restore() -> None:
     Never fails the restore: all errors are swallowed to debug log.
     """
     try:
-        from config import INSTANCE_DIR
         import shutil as _shutil
 
         # Only SQLite has a file to copy. On the documented external-DB

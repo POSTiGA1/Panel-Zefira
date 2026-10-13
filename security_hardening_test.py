@@ -169,9 +169,141 @@ def source_checks():
           and db.count("self.engine.url.database + suffix") == 1)
 
     # 6. Pre-update snapshots are bounded, not just pre-restore ones.
-    check("pre-update snapshots are pruned",
+    #
+    # This used to assert that the function's NAME was in the source:
+    #
+    #     "_prune_pre_update_snapshots" in main
+    #     and re.search(r"def _prune_pre_update_snapshots", main) is not None
+    #
+    # It never called it. So a function whose first line raised NameError -
+    # which is exactly what this one did, because main.py used INSTANCE_DIR
+    # without importing it - passed. The pre-update snapshot that is supposed to
+    # protect the operator's master key, CA and database from `git reset --hard`
+    # had never once run, and failed in the one way that reads like a disk
+    # problem. The check below calls it instead.
+    check("the names the updater depends on are still in the source",
           "_prune_pre_update_snapshots" in main
-          and re.search(r"def _prune_pre_update_snapshots", main) is not None)
+          and "_snapshot_runtime_state" in main,
+          "the updater calls these by name")
+
+
+# --------------------------------------------------------------------------
+# The pre-update snapshot, actually called.
+#
+# _do_update runs
+#     runtime_backup = _snapshot_runtime_state()
+#     ok, out = _git("reset", "--hard", f"origin/{branch}", timeout=120)
+# one line apart, and it goes on to the reset whether the snapshot returned a
+# path or None. So None has to mean "wrote nothing", and the only way to know
+# that is to run it.
+#
+# INSTANCE_DIR is repointed at a temporary directory and restored afterwards, so
+# nothing here can read or write the real instance/.
+
+def _snapshot_round_trip():
+    import importlib
+    import shutil
+    import tempfile
+
+    try:
+        import main as panel
+    except Exception as exc:                      # pragma: no cover
+        check("main.py imports for the snapshot check", False, repr(exc)[:70])
+        return
+
+    if not hasattr(panel, "INSTANCE_DIR"):
+        # main.py does not import it at module level, so the prune and the
+        # snapshot both raise NameError. Saying so is the finding.
+        check("the pre-update snapshot runs instead of raising", False,
+              "main.py has no module-level INSTANCE_DIR, so both updater helpers "
+              "raise NameError")
+        return
+    real = panel.INSTANCE_DIR
+    tmp = tempfile.mkdtemp(prefix="snap-")
+    try:
+        panel.INSTANCE_DIR = __import__("pathlib").Path(tmp)
+        for rel in ("secret.key", "ca.key", "ca.crt", "zefira.db"):
+            with open(os.path.join(tmp, rel), "wb") as fh:
+                fh.write(b"x" * 32)
+
+        try:
+            where = panel._snapshot_runtime_state()
+        except BaseException as exc:
+            check("the pre-update snapshot runs instead of raising",
+                  False, "%s: %s" % (type(exc).__name__, exc))
+            where = None
+        else:
+            check("the pre-update snapshot runs instead of raising", True)
+
+        check("the snapshot returns the path it wrote, not None",
+              bool(where),
+              "returned None - _do_update cannot tell the operator where it is")
+        if where:
+            got = set(os.listdir(where))
+            for rel in ("secret.key", "ca.key", "ca.crt", "zefira.db"):
+                check("the snapshot carries %s" % rel, rel in got,
+                      "missing: %s" % ", ".join(sorted(got)))
+            check("the snapshot copies the bytes, not just the names",
+                  open(os.path.join(where, "secret.key"), "rb").read() == b"x" * 32)
+
+        # Bounded: keep=2 with five snapshots on disk leaves the two newest.
+        for n in range(5):
+            d = os.path.join(tmp, "pre-update-2020010%d-000000" % n)
+            os.makedirs(d, exist_ok=True)
+            with open(os.path.join(d, "secret.key"), "wb") as fh:
+                fh.write(b"x" * 32)
+        before = sorted(d for d in os.listdir(tmp) if d.startswith("pre-update-"))
+        try:
+            panel._prune_pre_update_snapshots(keep=2)
+            after = sorted(d for d in os.listdir(tmp) if d.startswith("pre-update-"))
+        except BaseException as exc:
+            check("the prune runs instead of raising", False,
+                  "%s: %s" % (type(exc).__name__, exc))
+            after = []
+        else:
+            check("the prune runs instead of raising", True)
+        check("the prune is bounded to the newest snapshots",
+              len(after) == 2, "%d left: %s" % (len(after), after))
+        check("the prune keeps the NEWEST ones",
+              after == before[-2:], "kept %s, newest are %s" % (after, before[-2:]))
+
+        # "Best-effort: pruning must never be able to fail an update" is the
+        # docstring's own promise, and the reachable way to break it is the
+        # DELETION failing. Measured first: a missing directory and a path that
+        # is a file both make glob() return [], so neither reaches the guard.
+        import shutil as _sh
+
+        real_rmtree = _sh.rmtree
+
+        def _boom(path, *a, **kw):
+            raise OSError(28, "No space left on device")
+
+        _sh.rmtree = _boom
+        try:
+            try:
+                panel._prune_pre_update_snapshots(keep=1)
+                check("a prune whose deletion fails does not raise", True)
+            except BaseException as exc:
+                check("a prune whose deletion fails does not raise", False,
+                      "%s: %s" % (type(exc).__name__, exc))
+            check("the snapshots survive a failed deletion",
+                  len([d for d in os.listdir(tmp) if d.startswith("pre-update-")]) >= 2)
+        finally:
+            _sh.rmtree = real_rmtree
+    finally:
+        panel.INSTANCE_DIR = real
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# Only in the parent. The child imports a deliberately broken main.py, and with
+# the INSTANCE_DIR import removed it has no such attribute - so running this
+# there dies with AttributeError before the source checks, and the mutation
+# looks unproven for a reason that has nothing to do with what it measures.
+if os.environ.get("ZEFIRA_GUARD_SOURCE_ONLY") != "1":
+    print()
+    print("  the pre-update snapshot, actually called:")
+    _snapshot_round_trip()
+
 
 
 # Each mutation targets one fix and names it with a stable GUARD key. The
@@ -197,6 +329,12 @@ MUTATIONS = [
      lambda s: s.replace('for suffix in ("", "-wal", "-shm"):', 'for suffix in ("",):')),
     ("pre-update snapshots pruned", "prune",
      lambda s: s.replace("def _prune_pre_update_snapshots", "def _disabled_prune")),
+    # The one that matters. main.py used INSTANCE_DIR in the prune and the
+    # snapshot without importing it, so both died on their first line with
+    # NameError - and NameError is not OSError, so the prune's own guard did not
+    # catch it. Removing the module-level import reproduces exactly that.
+    ("INSTANCE_DIR imported where it is used", "instancedir",
+     lambda s: s.replace("\nfrom config import INSTANCE_DIR\n", "\n", 1)),
 ]
 
 
@@ -261,6 +399,15 @@ def main():
             bad.append(("wal", "wal sidecar not hardened"))
         if "def _prune_pre_update_snapshots" not in m:
             bad.append(("prune", "pre-update snapshots not pruned"))
+        # INSTANCE_DIR is used by the prune and the snapshot and was never
+        # imported at module level, so both died on their first line with
+        # NameError - which is not OSError, so the prune's own guard could not
+        # catch it. The functions were present the entire time the feature was
+        # dead, which is why the old name-based check passed.
+        if "from config import INSTANCE_DIR" not in m:
+            bad.append(("instancedir",
+                        "INSTANCE_DIR is not imported, so the snapshot raises "
+                        "NameError and _do_update resets --hard with no copy"))
         for key, why in bad:
             print("[FAIL] GUARD:%s %s" % (key, why))
         return 1 if bad else 0
