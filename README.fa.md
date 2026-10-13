@@ -25,41 +25,6 @@
 
 یک‌خطی:
 
-35 مجموعهٔ تست هست. 10 تا از بیرون به پنل در حال اجرا می‌زنند و 25 تا guard ایستا هستند که به چیزی نیاز ندارند. یک دستور هر 35 را اجرا می‌کند:
-
-```
-
-این‌ها به چیزی نیاز ندارند — guardهای ایستا روی نصب‌کننده، مستندات و یادداشت انتشار:
-```bash
-python installer_test.py                                       # installer CLI
-python dashboard_link_test.py                                  # customer dashboard link
-python proxy_trust_test.py                                     # proxy trust + client IP
-python link_encoding_test.py                                   # share-link remark encoding
-python update_guard_test.py                                    # updater intrusion guard
-python migration_guard_test.py                                 # schema migration steps
-python env_symlink_guard_test.py                               # installer env symlink
-python bump_assets_guard_test.py                               # docs asset bump inputs
-python installer_unit_test.py                                  # installer heredoc safety
-python secret_at_rest_test.py                                  # customer secrets encrypted at rest
-python security_hardening_test.py                              # audit hardening: secret disclosure budgets, fail-closed scopes
-python subscription_token_test.py                              # the subscription bearer token is not readable at rest
-python installer_guard_test.py                                 # installer symlink + banner guards
-python readme_i18n_test.py                                     # README translations
-python telegram_hint_test.py                                   # telegram error hints
-python api_scope_test.py                                       # API token scope control
-python settings_guard_test.py                                  # settings + download guards
-python restore_guard_test.py                                   # restore + snapshot + token cap guards
-python harness_login_test.py                                   # harness can reach its admin
-python release_notes_test.py                                   # assistant not stale
-python settings_groups_test.py                                 # settings grouped, nothing lost
-python i18n_test.py                                            # docs i18n dictionaries
-python docs_coverage_test.py                                   # docs cover the panel
-python i18n_dict_check.js                                      # docs i18n coverage
-python i18n_render_check.js                                    # docs i18n renderer safety
-```bash
-python run_all_tests.py http://127.0.0.1:8000 admin YOURPASS
-```
-
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mrlurix/zefira-panel/main/install.sh | sudo bash
 ```
@@ -148,10 +113,10 @@ python -m uvicorn main:app --host 127.0.0.1 --port 8000 --no-server-header --no-
 ### اجرای تست‌ها
 
 [مجموعه‌های تست](#اجرای-تستها) از بیرون به پنل در حال اجرا ضربه می‌زنند. پنل را بالا بیاورید، سپس هرکدام را اجرا کنید (بین مجموعه‌ها پنل را ری‌استارت کنید). برای اجرای همه با هم: `python run_all_tests.py admin YOURPASS`. مجموعه‌ها مستقل از ترتیب‌اند و در پایان همه به تنظیمات پیش‌فرض کارخانه برمی‌گردند.
+در مجموع 37 مجموعهٔ تست هست: 10 تا زنده که به پنل در حال اجرا نیاز دارند و 27 تا ایستا که به چیزی نیاز ندارند.
+
 
 **فهرست کامل مجموعه‌ها و آنچه پوشش می‌دهند**
-
-فهرست کامل مجموعه‌ها و آنچه پوشش می‌دهند</summary>
 
 **زنده (10 مجموعه)** — به پنل در حال اجرا نیاز دارند:
 
@@ -165,11 +130,12 @@ python attack_paths_test.py  http://127.0.0.1:8000 admin YOURPASS  # مسیره�
 python frontend_bugs_test.py http://127.0.0.1:8000 admin YOURPASS  # رگرسیون فرانت‌اند
 python panel_sections_test.py http://127.0.0.1:8000 admin YOURPASS  # بخش‌های پنل
 python security_audit_test.py http://127.0.0.1:8000 admin YOURPASS  # ممیزی امنیتی
+python settings_cards_test.py http://127.0.0.1:8000 admin YOURPASS  # هر کارت تنظیمات، سرتاسری
 ```
 
 `feature_test.py` همهٔ ۷۷ مسیر API را در ۱۱ بخش پنل پیمایش می‌کند و ادعا می‌کند هر قابلیت واقعاً **قابل استفاده** است (لینک واقعی در اشتراک، QR قابل رمزگشایی، آرشیو کانفیگ کارکننده، ماتریس scope ربات، round-trip پشتیبان/بازیابی…) نه صرفاً در دسترس. `attack_test.py` خودش ترافیک خصمانه را شلیک می‌کند: جعل هدر، XSS ذخیره‌شده، path traversal، بدنه‌های بیش‌ازحد/تودرتو، ترفندهای یونیکد/encoding، timing oracle، سیل ورود، تلاش برای بیرون‌انداختن limiter، و کل ماتریس احراز هویت.
 
-**بدون سرور (25 مجموعه)** — کد واقعی را اجرا می‌کنند نه اینکه بخوانند، چون هر نقص زیر از بازبینی در سطح منبع رد شده بود:
+**بدون سرور (27 مجموعه)** — کد واقعی را اجرا می‌کنند نه اینکه بخوانند، چون هر نقص زیر از بازبینی در سطح منبع رد شده بود:
 
 ```bash
 python installer_test.py         # تضمین‌های نصب‌کننده، به‌صورت گارد ایستا
@@ -182,6 +148,21 @@ python env_symlink_guard_test.py # نوشتن .env از طریق symlink توس�
 python bump_assets_guard_test.py# ورودی‌های bump کردن asset مستندات
 python i18n_test.py             # قالب‌ها و JS پنل در برابر همهٔ localeها
 python docs_coverage_test.py    # هر endpoint، بخش و تنظیم مستند شده
+python secret_at_rest_test.py  # اسرار مشتری روی دیسک رمزنگاری شده
+python security_hardening_test.py  # سخت‌سازی audit: بودجهٔ افشای راز، scope با fail-closed
+python subscription_token_test.py  # توکن اشتراک روی دیسک خوانا نیست
+python installer_unit_test.py  # امنیت heredoc در نصب‌کننده
+python installer_guard_test.py  # گاردهای symlink و بنر نصب‌کننده
+python api_scope_test.py  # کنترل scope توکن API
+python api_coverage_test.py  # مرجع API همهٔ مسیرها را پوشش می‌دهد
+python settings_guard_test.py  # گاردهای تنظیمات و دانلود
+python restore_guard_test.py  # گاردهای بازیابی، snapshot و سقف توکن
+python telegram_hint_test.py  # راهنمای خطای تلگرام
+python operability_test.py  # رد کردن چند worker، هم‌بستگی درخواست، پوشش type hint
+python settings_groups_test.py  # تنظیمات گروه‌بندی شده و چیزی گم نشده
+python release_notes_test.py  # یادداشت انتشار کهنه نیست
+python readme_i18n_test.py  # هماهنگی ترجمه‌های README
+python harness_login_test.py  # تست‌ران به ادمین می‌رسد
 ```
 
 **بدون سرور (۲ اسکریپت Node)** — برای چهار زبان سایت مستندات:

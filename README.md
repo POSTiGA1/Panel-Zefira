@@ -147,8 +147,10 @@ backups or full-disk encryption, and see [SECURITY.md](SECURITY.md).
 The panel also accepts `DATABASE_URL`, so PostgreSQL and MySQL work through the
 same code path if you need concurrent writers.
 
-There are 36 test suites. 10 hit the running panel from the outside and
-26 are static guards that need nothing running. One command runs all 35:
+### Running the tests
+
+There are 37 test suites. 10 hit the running panel from the outside and
+27 are static guards that need nothing running. One command runs all 37:
 
 ```bash
 python run_all_tests.py http://127.0.0.1:8000 admin YOURPASS
@@ -219,7 +221,7 @@ stale asset version in a `fetch()` URL). All nine restore the panel to its
 shipped defaults afterwards, so the suites are
 order-independent and can run against a live panel (or all of them in one go with
 `python run_all_tests.py admin YOURPASS`). A green run ends with
-`21/21 suites passed` - nine live suites plus twelve that need no server. The
+`37/37 suites passed` - ten live suites plus twenty-seven that need no server. The
 per-suite counts are deliberately **not** written down here: they move every
 time a check is added, and a copied number that has drifted is worse than no
 number, because it reads as something to compare against. Read them off the run
@@ -287,6 +289,8 @@ editing `requirements.txt`, then verify it:
 ```bash
 python tools_lock.py
 python verify_lock_hashes.py
+python operability_test.py                                 # single-worker refusal, request correlation, annotation coverage
+python api_coverage_test.py                                # API reference covers every route
 ```
 
 > **Always run the verifier.** The lock is generated on one machine but

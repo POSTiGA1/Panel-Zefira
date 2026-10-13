@@ -25,41 +25,6 @@
 
 一行命令：
 
-共有 35 套测试。10 套从外部打击正在运行的面板，25 套是无需运行任何东西的静态守卫。一条命令即可运行全部 35 套：
-
-```
-
-以下无需运行任何东西——针对安装脚本、文档和发布说明的静态守卫：
-```bash
-python installer_test.py                                       # installer CLI
-python dashboard_link_test.py                                  # customer dashboard link
-python proxy_trust_test.py                                     # proxy trust + client IP
-python link_encoding_test.py                                   # share-link remark encoding
-python update_guard_test.py                                    # updater intrusion guard
-python migration_guard_test.py                                 # schema migration steps
-python env_symlink_guard_test.py                               # installer env symlink
-python bump_assets_guard_test.py                               # docs asset bump inputs
-python installer_unit_test.py                                  # installer heredoc safety
-python secret_at_rest_test.py                                  # customer secrets encrypted at rest
-python security_hardening_test.py                              # audit hardening: secret disclosure budgets, fail-closed scopes
-python subscription_token_test.py                              # the subscription bearer token is not readable at rest
-python installer_guard_test.py                                 # installer symlink + banner guards
-python readme_i18n_test.py                                     # README translations
-python telegram_hint_test.py                                   # telegram error hints
-python api_scope_test.py                                       # API token scope control
-python settings_guard_test.py                                  # settings + download guards
-python restore_guard_test.py                                   # restore + snapshot + token cap guards
-python harness_login_test.py                                   # harness can reach its admin
-python release_notes_test.py                                   # assistant not stale
-python settings_groups_test.py                                 # settings grouped, nothing lost
-python i18n_test.py                                            # docs i18n dictionaries
-python docs_coverage_test.py                                   # docs cover the panel
-python i18n_dict_check.js                                      # docs i18n coverage
-python i18n_render_check.js                                    # docs i18n renderer safety
-```bash
-python run_all_tests.py http://127.0.0.1:8000 admin YOURPASS
-```
-
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mrlurix/zefira-panel/main/install.sh | sudo bash
 ```
@@ -148,6 +113,8 @@ python -m uvicorn main:app --host 127.0.0.1 --port 8000 --no-server-header --no-
 ### 运行测试
 
 这些测试套件从外部打击运行中的面板。先启动面板，然后逐个运行（套件之间重启面板）。也可以一次跑完：`python run_all_tests.py admin YOURPASS`。各套件之间互不依赖顺序，结束时都会把面板恢复到出厂默认设置。
+共 37 套测试：10 套在线（需要正在运行的面板），27 套静态守卫（无需任何东西）。
+
 
 **在线套件（10 个）**——需要正在运行的面板：
 
@@ -161,11 +128,12 @@ python attack_paths_test.py  http://127.0.0.1:8000 admin YOURPASS  # 运维路�
 python frontend_bugs_test.py http://127.0.0.1:8000 admin YOURPASS  # 前端回归
 python panel_sections_test.py http://127.0.0.1:8000 admin YOURPASS  # 面板各分区
 python security_audit_test.py http://127.0.0.1:8000 admin YOURPASS  # 安全审计
+python settings_cards_test.py http://127.0.0.1:8000 admin YOURPASS  # 逐一端到端验证每张设置卡片
 ```
 
-`feature_test.py` 走遍 11 个面板分区里的全部 77 条 API 路由，并断言每项能力**确实可用**（订阅里有真实链接、二维码可解码、配置压缩包可用、机器人 scope 矩阵、备份/恢复往返等），而不只是「能访问」。`attack_test.py` 会自己发起攻击流量：请求头伪造、存储型 XSS、路径穿越、超大/深层嵌套请求体、Unicode/编码技巧、时间侧信道、登录洪水、限流器逐出尝试，以及完整的鉴权矩阵。
+`feature_test.py` 走遍 11 个面板分区里的全部 67 条 API 路由，并断言每项能力**确实可用**（订阅里有真实链接、二维码可解码、配置压缩包可用、机器人 scope 矩阵、备份/恢复往返等），而不只是「能访问」。`attack_test.py` 会自己发起攻击流量：请求头伪造、存储型 XSS、路径穿越、超大/深层嵌套请求体、Unicode/编码技巧、时间侧信道、登录洪水、限流器逐出尝试，以及完整的鉴权矩阵。
 
-**无需服务器（25 个套件）**——它们执行真实代码而不是只读代码，因为下面每一个缺陷都通过了源码级审查：
+**无需服务器（27 个套件）**——它们执行真实代码而不是只读代码，因为下面每一个缺陷都通过了源码级审查：
 
 ```bash
 python installer_test.py          # 安装脚本的保证，做成静态守卫
@@ -178,6 +146,21 @@ python env_symlink_guard_test.py  # 安装脚本经由符号链接写 .env
 python bump_assets_guard_test.py  # 文档资源版本更新的输入
 python i18n_test.py               # 面板模板与 JS 对照所有语言
 python docs_coverage_test.py      # 每个端点、分区和设置都有文档
+python secret_at_rest_test.py  # 客户机密在磁盘上已加密
+python security_hardening_test.py  # 审计加固：秘密披露预算、fail-closed 的 scope
+python subscription_token_test.py  # 订阅令牌在磁盘上不可读
+python installer_unit_test.py  # 安装脚本的 heredoc 安全性
+python installer_guard_test.py  # 安装脚本的符号链接与横幅守卫
+python api_scope_test.py  # API 令牌 scope 控制
+python api_coverage_test.py  # API 参考覆盖全部路由
+python settings_guard_test.py  # 设置与下载守卫
+python restore_guard_test.py  # 恢复、快照与令牌上限守卫
+python telegram_hint_test.py  # Telegram 错误提示
+python operability_test.py  # 拒绝多 worker、请求关联 id、类型标注覆盖率
+python settings_groups_test.py  # 设置已分组，没有内容丢失
+python release_notes_test.py  # 发布说明未过期
+python readme_i18n_test.py  # README 各语言版本的一致性
+python harness_login_test.py  # 测试工具可以登录管理员
 ```
 
 **无需服务器（2 个 Node 脚本）**——面向文档站点的四种语言：

@@ -97,6 +97,11 @@ OFFLINE_SUITES = [
     # a number, an address or a code fence is worse than none, because the reader
     # cannot tell which part to trust.
     ("readme_i18n_test.py", "README translations"),
+    # The API reference was copied out of the source by hand, so it fell
+    # behind: 33 of 67 /api routes were undocumented, among them the three
+    # that hand back a tunnel token. This parses main.py the way FastAPI
+    # registers it and fails when a route is added without being documented.
+    ("api_coverage_test.py", "API reference covers every route"),
     # Telegram returns one description for four unrelated mistakes, and "chat not\n    # found" was passed through verbatim. Pure string mapping, offline.
     ("telegram_hint_test.py", "telegram error hints"),
     # The docs promise a least-privilege `bot` token that the create form could

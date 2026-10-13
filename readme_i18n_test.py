@@ -6,6 +6,8 @@ part to trust. So this compares them against the English file rather than
 eyeballing.
 """
 import io
+import os
+import re
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -77,14 +79,185 @@ for fact, what in FACTS:
           "absent from %s" % ", ".join(missing))
 
 print()
-print("  every fenced block in each language opens a shell or text block "
-      "identically to the English one:")
+print("  every command the English file tells a reader to run is in the "
+      "translation too:")
+#
+# This replaced a check on the NUMBER of fenced blocks, which passed by
+# accident: all three translations carried a duplicated copy of the test block
+# spliced into "Install on a server" - between the "one-liner:" lead-in and the
+# very curl command it introduces, followed by an orphan empty fence - and
+# those extra blocks brought the count up to the English one. Removing the
+# duplicate, which is the fix for a section that read like that, exposed that
+# the count had been measuring the accident: en has 12 blocks, fa/zh/ru have
+# 10, and always did. The commands, measured, are identical in all four.
+_CMD = re.compile(r"^\s*(curl|python3?|node|git|pip|bash|sh|systemctl|sudo|"
+                  r"nginx|docker|make|apt|dnf|yum)\b")
+
+
+def _commands(text):
+    out, inb = [], False
+    for line in text.split("\n"):
+        if line.strip().startswith("```"):
+            inb = not inb
+            continue
+        if inb:
+            m = _CMD.match(line)
+            if m:
+                out.append(m.group(1))
+    return out
+
+
+_base = set(_commands(texts["en"]))
 for loc in ("fa", "zh", "ru"):
-    en_fences = texts["en"].split("```")[1::2]
-    lo_fences = texts[loc].split("```")[1::2]
-    same = len(en_fences) == len(lo_fences)
-    check("%s has the same number of code blocks as en" % loc, same,
-          "en=%d %s=%d" % (len(en_fences), loc, len(lo_fences)))
+    got = set(_commands(texts[loc]))
+    check("%s names every command en does (%d)" % (loc, len(_base)),
+          _base <= got,
+          "absent: %s" % ", ".join(sorted(_base - got)))
+    check("%s invents no command en does not" % loc, got <= _base,
+          "extra: %s" % ", ".join(sorted(got - _base)))
+
+print()
+print("  fenced-block shape (informational: the four documents group their "
+      "examples differently, and always did):")
+for loc in ("en", "fa", "zh", "ru"):
+    print("    %-3s %d blocks, %d distinct commands"
+          % (loc, texts[loc].count("```") // 2, len(set(_commands(texts[loc])))))
+
+# --- the suite lists must agree with the runner ---------------------------
+#
+# The lists had already drifted twice before this check existed: README.md said
+# "36 test suites" and "all 35" in consecutive lines, and the translations had
+# been two releases behind because nothing compared them to run_all_tests.py.
+# So this reads the runner rather than trusting any number written down.
+
+import ast
+
+_runner = ast.parse(io.open("run_all_tests.py", encoding="utf-8").read())
+_counts = {}
+for _n in _runner.body:
+    if isinstance(_n, ast.Assign) and getattr(_n.targets[0], "id", "") in (
+            "SUITES", "OFFLINE_SUITES"):
+        _counts[_n.targets[0].id] = len(_n.value.elts)
+TOTAL = _counts["SUITES"] + _counts["OFFLINE_SUITES"]
+ONLINE = _counts["SUITES"]
+OFFLINE = _counts["OFFLINE_SUITES"]
+TOTAL_FOR_PROOF = TOTAL
+RUNNER = set(re.findall(r'\("(\w+_test\.py)",',
+                        io.open("run_all_tests.py", encoding="utf-8").read()))
+
+print()
+print("  suite lists against run_all_tests.py (%d suites: %d live, %d static):"
+      % (TOTAL, ONLINE, OFFLINE))
+for loc in ("en", "fa", "zh", "ru"):
+    body = texts[loc]
+    named = set(re.findall(r"^python (\w+_test\.py)\b", body, re.M))
+    check("%s lists every suite the runner runs" % loc, named >= RUNNER,
+          "missing %s" % ", ".join(sorted(RUNNER - named)))
+    check("%s names no suite the runner does not run" % loc, named <= RUNNER,
+          "invented %s" % ", ".join(sorted(named - RUNNER)))
+    # A total written down that is not the runner's is the defect that shipped:
+    # "36 ... all 35" in one file, "35 / 25" in three others.
+    totals = {int(x) for x in re.findall(
+        r"(\d+)\s*(?:test suites|مجموعهٔ تست هست|套测试|наборов тестов)", body)}
+    check("%s states a total equal to the runner's" % loc,
+          totals and totals <= {TOTAL},
+          "says %s, runner has %d" % (sorted(totals), TOTAL))
+    # The suite list belongs in the test section, not inside the install one.
+    inst = body.find("install.sh | sudo bash")
+    head = min((body.find(h) for h in ("### Running the tests",
+                                       "\u0627\u062c\u0631\u0627\u06cc \u062a\u0633\u062a",
+                                       "\u8fd0\u884c\u6d4b\u8bd5",
+                                       "\u0417\u0430\u043f\u0443\u0441\u043a \u0442\u0435\u0441\u0442\u043e\u0432")
+                    if h in body), default=-1)
+    check("%s introduces its install one-liner before the test section" % loc,
+          inst > 0 and head > inst,
+          "install at %d, test heading at %d" % (inst, head))
+
+
+
+# --------------------------------------------------------------------------
+# Prove each of the new checks fails when the thing it guards is broken.
+#
+# A guard nobody saw fail is a comment with an exit code. Every mutation here
+# is a defect that actually shipped in this repository, or the exact opposite
+# of one.
+
+if os.environ.get("ZEFIRA_README_CHILD") != "1":
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+
+    _ROOT = os.path.dirname(os.path.abspath(__file__))
+    _FILES = ["README.md", "README.fa.md", "README.zh.md", "README.ru.md"]
+    _bk = tempfile.mkdtemp(prefix="readme-mut-")
+    for _f in _FILES:
+        shutil.copyfile(os.path.join(_ROOT, _f), os.path.join(_bk, _f))
+
+    def _read(_p):
+        return io.open(_p, encoding="utf-8", newline="").read()
+
+    def _child():
+        r = subprocess.run(
+            [sys.executable, os.path.abspath(__file__)],
+            capture_output=True, text=True, timeout=180,
+            cwd=_ROOT,
+            env=dict(os.environ, ZEFIRA_README_CHILD="1"))
+        return r.stdout
+
+    def _prove(label, expect, fname, fn):
+        path = os.path.join(_ROOT, fname)
+        original = _read(path)
+        broken = fn(original)
+        if broken == original:
+            check(label, False, "the mutation did not apply, so it proves nothing")
+            return
+        io.open(path, "w", encoding="utf-8", newline="").write(broken)
+        try:
+            out = _child()
+            check(label, expect in out)
+        finally:
+            io.open(path, "w", encoding="utf-8", newline="").write(original)
+
+    def _drop_node(text):
+        for script in ("node i18n_dict_check.js", "node i18n_render_check.js"):
+            text = re.sub(r"^\s*%s.*\n" % re.escape(script), "", text,
+                          count=1, flags=re.M)
+        return text
+
+    def _splice_install(text):
+        i = text.index("### اجرای تست‌ها")
+        head = text[:i]
+        j = head.index("یک‌خطی:")
+        j = head.index("\n", j) + 1
+        first = text[i:].split("\n", 1)[0][:110]
+        return head[:j] + first + "\n" + head[j:] + text[i:]
+
+    print()
+    print("  --- proving each new check fails when its fix is removed ---")
+    _prove("goes red without this fix: a suite dropped from a README",
+           "[FAIL] fa lists every suite the runner runs", "README.fa.md",
+           lambda t: re.sub(r"^python operability_test\.py.*\n", "", t,
+                            count=1, flags=re.M))
+    _prove("goes red without this fix: a suite invented in a README",
+           "[FAIL] en names no suite the runner does not run", "README.md",
+           lambda t: t.replace("python installer_test.py  ",
+                               "python not_a_real_suite_test.py  ", 1))
+    _prove("goes red without this fix: a stale total, as shipped",
+           "[FAIL] en states a total equal to the runner's", "README.md",
+           lambda t: t.replace("There are %d test suites." % TOTAL,
+                               "There are %d test suites." % (TOTAL - 1), 1))
+    _prove("goes red without this fix: the test block in the install section",
+           "[FAIL] fa introduces its install one-liner before the test section",
+           "README.fa.md", _splice_install)
+    _prove("goes red without this fix: a command removed from a translation",
+           "[FAIL] ru names every command en does", "README.ru.md", _drop_node)
+    check("all four READMEs restored byte-for-byte after mutation",
+          all(_read(os.path.join(_ROOT, f))
+              == io.open(os.path.join(_bk, f), encoding="utf-8",
+                         newline="").read() for f in _FILES))
+    shutil.rmtree(_bk, ignore_errors=True)
+
 
 print()
 print("=== %s ===" % ("ALL OK" if not fails else "%d FAILED" % len(fails)))
