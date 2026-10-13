@@ -12,7 +12,9 @@ Simple panel for managing and selling VPN accounts. Started as a private tool fo
 
 Works with VLESS, VLESS-REALITY, VMess, Trojan, Shadowsocks, Hysteria2, WireGuard, OpenVPN, L2TP/IPsec, Cisco AnyConnect and SOCKS5. One user can have multiple protocols at once and gets a single subscription link.
 
-Built with FastAPI + SQLite. No Docker required, just Python.
+Built with FastAPI + SQLite by default - no Docker required, just Python.
+SQLite is the default because a single-VPS panel does not need anything more.
+Set `DATABASE_URL` and PostgreSQL or MySQL are used through the same code path.
 
 ### Screenshots
 
@@ -123,16 +125,28 @@ If you prefer env files, copy `.env.example` to `.env`. Env vars are only used a
 
 I tried to keep it tight: scrypt for passwords, JWT in HttpOnly cookies, rate limits on login (per source IP, checked before any hashing), CSRF checks, strict CSP, parameterized queries, no innerHTML for user data, and audit logging.
 
-**What is encrypted:** the Telegram/AI credentials, REALITY and WireGuard host
-keys, tunnel tokens and encrypted backups (AES/Fernet with
-`instance/secret.key`). **What is not:** the per-customer VPN credentials in
-the database (`secret_data`) - they are plain JSON in `instance/zefira.db` and
-in an unencrypted backup, by design so the panel can rebuild links without a
-decrypt round-trip. Treat the database and unencrypted backups as customer
-credentials: keep `instance/` at `700`, use encrypted backups or full-disk
-encryption, and see [SECURITY.md](SECURITY.md).
+**What is encrypted:** the Telegram/AI credentials, the REALITY private key,
+tunnel tokens, the per-customer VPN credentials in the database
+(`secret_data` — the WireGuard private key, OpenVPN client keypair, L2TP PSK and
+per-protocol passwords, encrypted since v1.15.27), the customer subscription
+tokens (since v1.15.29), and encrypted backups. All of it is AES/Fernet under
+`instance/secret.key`.
 
-There are nine test suites that hit the running panel from the outside. Start
+The subscription token needed care: it has to stay an indexed lookup for
+`/sub/{token}`, so the column holds a Fernet blob and a separate HMAC digest
+column provides the index. Before that, a token lifted straight out of
+`instance/zefira.db` answered `/sub/{token}` with 200 and the customer's
+private key, and an unencrypted backup carried it in cleartext.
+
+**What is not encrypted:** display names, notes, usage counters and timestamps —
+billing data, not credentials. Treat the database and unencrypted backups as
+customer credential material anyway: keep `instance/` at `700`, use encrypted
+backups or full-disk encryption, and see [SECURITY.md](SECURITY.md).
+
+The panel also accepts `DATABASE_URL`, so PostgreSQL and MySQL work through the
+same code path if you need concurrent writers.
+
+There are thirty-five test suites that hit the running panel from the outside. Start
 the panel, then run each one (restart the panel between suites):
 
 ```bash

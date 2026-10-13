@@ -2,7 +2,7 @@
 
 Zefira takes security seriously: scrypt password hashing, HttpOnly
 SameSite cookies, rate-limited login, CSRF + CSP headers, audit logging, and
-seven test suites that run against a live panel: `security_test.py` (120
+thirty-five test suites that run against a live panel: `security_test.py` (120
 penetration/abuse checks), `feature_test.py` (178 feature checks),
 `functional_test.py` (60 end-to-end checks), `attack_test.py` (129 live
 adversarial probes), `attack_quota_test.py` (46 quota/schema boundaries),
@@ -16,13 +16,14 @@ Encrypted at rest with `instance/secret.key` (AES/Fernet):
 - Telegram bot token, AI API key
 - REALITY private key
 - Tunnel (BackPack) tokens
-- Per-customer credentials in \pn_users.secret_data\ (WireGuard private key,
+- Per-customer credentials in `vpn_users.secret_data` (WireGuard private key,
   OpenVPN client keypair, L2TP PSK, per-protocol passwords) - encrypted since
   v1.15.27
 - Customer subscription tokens, since v1.15.29. The column holds a Fernet blob
-  and an HMAC digest column provides the indexed lookup \/sub/{token}\. This
-  one was measured, not suspected: a token read straight out of \zefira.db  answered \/sub/{token}\ with 200 and the customer's private key, and an
-  unencrypted backup carried the same token in cleartext.
+  and a separate HMAC digest column provides the indexed lookup `/sub/{token}`.
+  This one was measured, not suspected: a token read straight out of
+  `zefira.db` answered `/sub/{token}` with 200 and the customer's private key,
+  and an unencrypted backup carried the same token in cleartext.
 - Encrypted backups
 
 Not stored by the panel at all: the WireGuard **host** private key. The panel
@@ -39,6 +40,38 @@ Treat the database and every unencrypted backup as customer credential material:
   encryption;
 - never send an unencrypted backup over chat or email;
 - a leaked database is a leaked customer account, not just panel data.
+
+
+## The AI assistant, and what it sends
+
+Two different things wear the name "assistant". They have nothing in common
+risk-wise, so they are separated here.
+
+**The assistant on the documentation site** has no backend, no API key and no
+network call. It scores your typed words against a JSON file that ships in the
+repository, and it renders with `textContent` only. Nothing you type leaves the
+browser, and nothing can be injected into the page through it.
+
+**The assistant in the panel** (`POST /api/ai/chat`) is the opposite: it calls
+a provider you configure (`base_url` + API key) and sends it customer context -
+the rows the tools need to answer "reset usage for alice". The consequences,
+stated plainly:
+
+- It is admin-only. A `bot`-scoped API token is rejected at the route, so an
+  integration token cannot drive it.
+- Customer names, notes, usage counters and configuration do leave your host,
+  to whichever provider you pointed `base_url` at. If that matters to you, do
+  not configure an AI provider; nothing else in the panel depends on it.
+- A restore cannot plant an `ai_extra` block. The whole AI configuration is
+  excluded from restore, because a crafted backup could otherwise inject
+  prompt content that later runs with admin authority.
+- The provider URL is checked before every request: scheme, userinfo, port
+  range, resolved addresses against a blocked list, a pinned dial address to
+  close the DNS-rebinding window, and no redirect following.
+- Errors from the provider are scrubbed of the API key before they are logged.
+
+If you enable it, treat it the way you would treat any third party you hand
+customer data to.
 
 ## Reporting a vulnerability
 
