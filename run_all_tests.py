@@ -97,6 +97,11 @@ OFFLINE_SUITES = [
     # single-worker. Measured against a live panel: 12.00 s before, 0.23 s
     # cold and 0.025 s warm after, with the GitHub half on a daemon thread.
     ("update_status_latency_test.py", "update page never waits on GitHub"),
+    # The panel pinned BackPack v1.8.2 while upstream shipped v1.8.3,
+    # v1.8.4 and v1.8.5, and the setup guide still described the wizard
+    # those releases retired. 99 checks over the pin, the sni carrier, the
+    # four per-tunnel options and every guide line, each proved red.
+    ("backpack_tunnel_test.py", "BackPack v1.8.5 tunnel capabilities"),
     ("installer_guard_test.py", "installer symlink + banner guards"),
     # The four READMEs, compared rather than eyeballed: a translation that drops
     # a number, an address or a code fence is worse than none, because the reader

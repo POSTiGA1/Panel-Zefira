@@ -4433,6 +4433,15 @@ def api_nodes_list(admin: Admin = Depends(require_admin)):
         return [n.to_dict() for n in rows]
 
 
+def _bp_join_hosts(raw: str) -> str:
+    """Comma-separated hosts, tidied the way the two address fields are.
+
+    Two call sites needed the same normalisation, and a helper is how a
+    "1.1.1.1, , 2.2.2.2" written into one column and left in one is stopped.
+    """
+    return ", ".join(h.strip() for h in raw.split(",") if h.strip())
+
+
 @app.post("/api/nodes")
 def api_nodes_create(data: TunnelNodeIn, request: Request, admin: Admin = Depends(require_admin)):
     # SSRF guard: tunnel IPs become probe targets (/check dials iran_ip).
@@ -4440,6 +4449,23 @@ def api_nodes_create(data: TunnelNodeIn, request: Request, admin: Admin = Depend
     for label, host in (("iran_ip", data.iran_ip), ("kharej_ip", data.kharej_ip)):
         if _hostname_is_ssrf_blocked(host):
             raise HTTPException(status_code=400, detail=f"{label}: metadata/link-local targets blocked")
+    # backup_hosts are addresses the setup link carries and the kharej may then
+    # DIAL, so they are held to the same rule as the two primaries. The panel
+    # does not probe them itself, but a metadata address pasted here would be
+    # carried into a tunnel the operator builds, which is the oracle the check
+    # above exists to stop.
+    #
+    # DEDENTED to the loop's own column on purpose: at one level deeper it was
+    # unreachable (it sat under a raise) and then ran twice, once per primary
+    # address. Loopback stays allowed, exactly as it is for iran_ip and
+    # kharej_ip - the panel itself runs on 127.0.0.1.
+    for _i, _host in enumerate(
+            _h.strip() for _h in data.backup_hosts.split(",") if _h.strip()):
+        if _hostname_is_ssrf_blocked(_host):
+            raise HTTPException(
+                status_code=400,
+                detail=f"backup_hosts[{_i}]: metadata/link-local targets blocked")
+
     token_plain = secrets.token_urlsafe(24)
     with db.s() as s:
         exists = s.scalar(select(TunnelNode.id).where(TunnelNode.name == data.name))
@@ -4453,6 +4479,11 @@ def api_nodes_create(data: TunnelNodeIn, request: Request, admin: Admin = Depend
             tunnel_port=data.tunnel_port,
             forwarded_ports=", ".join(p.strip() for p in data.forwarded_ports.split(",") if p.strip()),
             udp_forward=data.udp_forward,
+            # BackPack v1.8.5 options.
+            preset=data.preset,
+            traffic_limit_gb=data.traffic_limit_gb,
+            restart_hours=data.restart_hours,
+            backup_hosts=_bp_join_hosts(data.backup_hosts),
             token_enc=encrypt_text(token_plain),
         )
         s.add(node)
@@ -4466,7 +4497,17 @@ def api_nodes_create(data: TunnelNodeIn, request: Request, admin: Admin = Depend
             # one-time token must never be lost to a 500 after it exists.
             out = node.to_dict()
             out["token_once"] = token_plain
-            audit(s, "NODE_CREATE", f"{data.name} {data.transport} by {admin.username}", client_ip(request))
+            # An audit line reading only "mytunnel tcp" cannot answer "did anyone
+            # cap this, or put a restart schedule on it?", which is what the record
+            # exists for.
+            _bits = [data.name, data.transport, data.preset]
+            if data.traffic_limit_gb:
+                _bits.append(f"cap {data.traffic_limit_gb}GB")
+            if data.restart_hours:
+                _bits.append(f"restart {data.restart_hours}h")
+            if data.backup_hosts:
+                _bits.append("backup hosts")
+            audit(s, "NODE_CREATE", f"{' '.join(_bits)} by {admin.username}", client_ip(request))
             _commit(s)
         except IntegrityError:
             s.rollback()

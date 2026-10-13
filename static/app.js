@@ -1434,6 +1434,19 @@ function renderNodes(nodes) {
     st.textContent = n.status ? nodeStatusText(n.status) : "";
     st.style.color = n.status === "online" ? "var(--green)" : n.status === "offline" ? "var(--red)" : "var(--muted)";
     li.appendChild(main);
+    // Only what THIS tunnel sets, built per node: one that uses none of the
+    // v1.8.5 options looks exactly as it did before.
+    const chips = [];
+    if (n.preset && n.preset !== "turbo") chips.push(n.preset);
+    if (n.traffic_limit_gb) chips.push(`${n.traffic_limit_gb} GB cap`);
+    if (n.restart_hours) chips.push(`restart ${n.restart_hours}h`);
+    if (n.backup_hosts) chips.push(t("tunnels.chipBackup"));
+    if (chips.length) {
+      const chip = document.createElement("small");
+      chip.className = "muted";
+      chip.textContent = chips.join(" · ");
+      li.appendChild(chip);
+    }
     li.appendChild(st);
     const mk = (title, act, cls, id, extraName) => {
       const b = iconBtn(title, ICONS[act === "check" ? "refresh" : act] || ICONS.refresh, cls);
@@ -1498,12 +1511,32 @@ bind("#node-create-btn", "click", async (e) => {
           return tp;
         })(),
         forwarded_ports: $("#node-fports").value.trim(),
-        udp_forward: $("#node-udp").checked
+        udp_forward: $("#node-udp").checked,
+        // BackPack v1.8.5 options. numInput returns NaN for a blank field, and
+        // NaN serialises to null, which a plain int field rejects with a raw
+        // pydantic message - the trap the tunnel port field already documents,
+        // so it is guarded the same way instead of a second, different way.
+        preset: $("#node-preset").value,
+        traffic_limit_gb: (() => {
+          const v = numInput($("#node-limit").value);
+          if (!Number.isFinite(v) || v < 0) throw new Error(t("msg.badNumbers"));
+          return Math.trunc(v);
+        })(),
+        restart_hours: (() => {
+          const v = numInput($("#node-restart").value);
+          if (!Number.isFinite(v) || v < 0) throw new Error(t("msg.badNumbers"));
+          return Math.trunc(v);
+        })(),
+        backup_hosts: $("#node-backup").value.trim()
       }
     });
     if (!await copyText(node.token_once)) prompt(t("prm.tokenOnce"), node.token_once);
     toast(t("msg.tunnelCreated"));
     $("#node-name").value = ""; $("#node-iran").value = ""; $("#node-kharej").value = "";
+    // The two numbers go back to their defaults, not to "", so a second tunnel
+    // never silently inherits the first one's cap or restart schedule.
+    $("#node-limit").value = "0"; $("#node-restart").value = "0";
+    $("#node-backup").value = "";
     loadNodes();
     setTimeout(() => openGuide(`/api/nodes/${node.id}/guide`), 500);
   } catch (err) { if (err.message !== "auth") toast(err.message, false); }

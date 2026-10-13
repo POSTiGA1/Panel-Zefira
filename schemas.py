@@ -448,7 +448,21 @@ HOST_PORT_PAIRS_RE = r"^(?:|[0-9]{1,5}:[0-9]{1,5}(\s*,\s*[0-9]{1,5}:[0-9]{1,5})*
 Transport = Literal[
     "tcp", "tcp-mux", "tcp-stealth", "tcp-pck", "udp", "kcp", "quic",
     "ws", "ws-mux", "wss", "wss-mux", "icmp", "ip-spoof",
+    # SNI Spoofing: listed among the direct carriers upstream in v1.8.4 and
+    # moved onto the setup-link wizard in v1.8.5. The panel could not offer it.
+    "sni",
 ]
+
+# Named performance presets the v1.8.4+ wizards offer. Kept here because the
+# schema has to reject anything upstream will not take, and this is the same
+# list protocols.BACKPACK_PRESETS - imported rather than retyped, so the two
+# cannot drift apart.
+BACKPACK_PRESET_VALUES = ("turbo", "aggressive", "conservative", "custom")
+
+# One host per comma-separated item: an IP, a domain or a CDN edge. The same
+# HOST_CORE the two address fields already use, so a backup address is held to
+# exactly the rule the primary ones are.
+BACKUP_HOSTS_RE = r"^(?:|" + HOST_CORE + r"(\s*,\s*" + HOST_CORE + r")*)\z"
 
 
 class TunnelNodeIn(BaseModel):
@@ -461,6 +475,14 @@ class TunnelNodeIn(BaseModel):
     tunnel_port: StrictInt = Field(ge=1, le=65535)
     forwarded_ports: str = Field(default="", max_length=200, pattern=HOST_PORT_PAIRS_RE)
     udp_forward: bool = False
+    # BackPack v1.8.5 options. Every default is upstream's own default.
+    preset: Literal["turbo", "aggressive", "conservative", "custom"] = "turbo"
+    # 0 means no limit, which upstream shows as infinity. The ceiling is the
+    # largest preset on offer (10 TB) times a wide margin, not an arbitrary one.
+    traffic_limit_gb: StrictInt = Field(default=0, ge=0, le=1024000)
+    # 0 is off, upstream's default. The wizard's own dial is hourly.
+    restart_hours: StrictInt = Field(default=0, ge=0, le=8760)
+    backup_hosts: str = Field(default="", max_length=253, pattern=BACKUP_HOSTS_RE)
 
     @field_validator("forwarded_ports", mode="after")
     @classmethod

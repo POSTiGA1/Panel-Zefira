@@ -418,6 +418,19 @@ class BlockedSite(Base):
         }
 
 
+def _int_or(value, default: int) -> int:
+    """An INTEGER column that may hold text, as a SQLite row edited by hand can.
+
+    The guide formats these with %d, which raises on a string - so one mangled
+    row would turn a tunnel's setup guide into a 500 instead of showing the
+    tunnel with its limit unset.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 class TunnelNode(Base):
     __tablename__ = "tunnel_nodes"
 
@@ -431,6 +444,12 @@ class TunnelNode(Base):
     udp_forward = Column(Boolean, nullable=False, default=False)
     token_enc = Column(Text, nullable=False)
     status = Column(String(12), nullable=False, default="unknown")
+    # BackPack v1.8.5 options. Defaults match upstream's own defaults, so a row
+    # written before this release behaves exactly as it did.
+    preset = Column(String(16), nullable=False, default="turbo")
+    traffic_limit_gb = Column(Integer, nullable=False, default=0)
+    restart_hours = Column(Integer, nullable=False, default=0)
+    backup_hosts = Column(Text, nullable=False, default="")
     last_check = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=utcnow)
 
@@ -444,6 +463,13 @@ class TunnelNode(Base):
             "tunnel_port": self.tunnel_port,
             "forwarded_ports": safe_text(self.forwarded_ports),
             "udp_forward": self.udp_forward,
+            "preset": safe_text(self.preset or "turbo"),
+            # int() rather than the raw column: a hand-edited row can hold text
+            # in an INTEGER column on SQLite, and the guide formats these with
+            # %d, which would raise on a string instead of showing the tunnel.
+            "traffic_limit_gb": _int_or(self.traffic_limit_gb, 0),
+            "restart_hours": _int_or(self.restart_hours, 0),
+            "backup_hosts": safe_text(self.backup_hosts or ""),
             "status": self.status,
             "last_check": (
                 self.last_check.isoformat(timespec="seconds") + "Z" if self.last_check else None
@@ -627,6 +653,14 @@ def _migration_steps(dialect_name):
         _add("user_templates", "device_limit", "device_limit INTEGER"),
         _add("api_tokens", "scopes", "scopes VARCHAR(16) NOT NULL DEFAULT 'full'"),
         _add("api_tokens", "expires_at", f"expires_at {dt_ddl}"),
+        # BackPack v1.8.5 per-tunnel options. Each defaults to the value
+        # upstream itself defaults to, so an existing tunnel keeps its meaning:
+        # turbo, no limit, no restart schedule, no backup addresses.
+        _add("tunnel_nodes", "preset", "preset VARCHAR(16) NOT NULL DEFAULT 'turbo'"),
+        _add("tunnel_nodes", "traffic_limit_gb",
+             "traffic_limit_gb INTEGER NOT NULL DEFAULT 0"),
+        _add("tunnel_nodes", "restart_hours", "restart_hours INTEGER NOT NULL DEFAULT 0"),
+        _add("tunnel_nodes", "backup_hosts", f"backup_hosts {text_ddl}"),
         _blank_backfill("secret_data"),
         _blank_backfill("protocols"),
         _scopes_backfill,

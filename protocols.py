@@ -27,7 +27,7 @@ V2RAY_FAMILY = {"vless", "vmess", "trojan", "ss"}
 # Relay-style protocols that accept extra per-port endpoints (inbounds).
 INBOUND_PROTOCOLS = ["vless", "reality", "vmess", "trojan", "ss", "hysteria2"]
 # BackPack reverse-tunnel transports accepted by tunnel nodes.
-TUNNEL_TRANSPORTS = ["tcp", "tcp-mux", "tcp-stealth", "tcp-pck", "udp", "kcp", "quic", "ws", "ws-mux", "wss", "wss-mux", "icmp", "ip-spoof"]
+TUNNEL_TRANSPORTS = ["tcp", "tcp-mux", "tcp-stealth", "tcp-pck", "udp", "kcp", "quic", "ws", "ws-mux", "wss", "wss-mux", "icmp", "ip-spoof", "sni"]
 # Protocols served without per-inbound endpoints (single server-wide
 # endpoint, like WireGuard/OpenVPN): no inbound variants are generated.
 SINGLE_ENDPOINT = {"wireguard", "openvpn", "l2tp", "cisco", "socks5"}
@@ -1182,13 +1182,67 @@ def subscription_body(u: dict, srv: dict, inbounds: list = None) -> tuple[str, s
     return base64.b64encode(body).decode(), "text/plain"
 
 
-BACKPACK_VERSION = "v1.8.2"
+BACKPACK_VERSION = "v1.8.5"
 # Pinned, hash-verified BackPack installer (white-hat: piping a floating
 # branch to bash turns an upstream compromise into RCE-as-root on both
 # tunnel servers). Bump deliberately per BackPack release: take the commit
 # SHA, download install.sh at that commit, record its sha256 here.
-BACKPACK_PIN_COMMIT = "5e1d15734550c7133fe512ab62475ce1482cf1da"
-BACKPACK_PIN_SHA256 = "478789edc3ca702724ca643bfc3785123da0d4983e80f060726d8e258d82ab18"
+#
+# v1.8.5, released 2026-09-30. The sha256 below was computed over install.sh
+# fetched at BACKPACK_PIN_COMMIT, and the method was proved first by
+# recomputing the v1.8.2 pair the same way and getting back the hash this
+# panel already recorded. Anything older than the pin cannot read the new
+# backpack://2. setup link (upstream says so itself), and the guide below
+# hands that link out, so the pin and the guide have to move together.
+BACKPACK_PIN_COMMIT = "ff86354bcafbd054e7888e48343145323c9b2207"
+BACKPACK_PIN_SHA256 = "04681e6744b7d5d9d03a6c9b48910a1fd4bcb908bed83f0bf8ad80607a5e0f6e"
+
+# Named performance presets the v1.8.4+ wizards offer. The guide used to hard
+# code Turbo, which left the operator with nothing to choose and no way to ask
+# for a gentler profile on a route that punishes an aggressive one.
+BACKPACK_PRESETS = ["turbo", "aggressive", "conservative", "custom"]
+
+# Carriers that are set up from the Iran server and carried by the setup link
+# (v1.8.4 listed them in this order). Kept as data because the guide, the form
+# and the schema all have to agree on which carriers are direct, and three
+# copies of that list is how the panel ended up missing `sni`.
+BACKPACK_DIRECT_CARRIERS = ["xdi", "pck", "udp", "quic", "ip-spoof", "sni"]
+
+
+def _bp_optional(node: dict) -> str:
+    """The optional sections, each one only when the node sets it.
+
+    A node that uses none of them renders exactly as it did before, which is the
+    point: a guide that always shows a quota the tunnel does not have is worse
+    than a guide that says nothing.
+    """
+    out = []
+    limit = node.get("traffic_limit_gb") or 0
+    if limit:
+        out.append(
+            "  Traffic limit : %d GB  (no limit is written when this is 0)\n"
+            "      the engine enforces it: the tunnel goes offline the moment the\n"
+            "      total is reached, and comes back within two seconds of the cap\n"
+            "      being raised. Stored as <name>.quota.json beside the config.\n"
+            % int(limit))
+    hours = node.get("restart_hours") or 0
+    if hours:
+        out.append(
+            "  Restart both  : every %d h, as a systemd timer in UTC\n"
+            "      both ends restart together on the same timer, so an Iran box on\n"
+            "      +03:30 and a kharej on UTC still line up. 0 is off, which is\n"
+            "      upstream's default. (Auto Refresh is different: it runs from cron\n"
+            "      in each machine's own timezone, so the two ends drift apart.)\n"
+            % int(hours))
+    hosts = (node.get("backup_hosts") or "").strip()
+    if hosts:
+        out.append(
+            "  Backup hosts  : %s\n"
+            "      these ride in the setup link. A kharej built from that link\n"
+            "      fails over to them on its own if the Iran address stops\n"
+            "      answering - another IP, a domain, a CDN edge, separated by\n"
+            "      commas.\n" % hosts)
+    return "".join(out)
 
 
 def backpack_guide(node: dict, token: str) -> str:
@@ -1198,20 +1252,35 @@ def backpack_guide(node: dict, token: str) -> str:
         "kcp": "UDP + KCP + FEC", "quic": "UDP + QUIC",
         "ws": "WS", "ws-mux": "WS Mux", "wss": "WSS", "wss-mux": "WSS Mux",
         "icmp": "xDi (ICMP)", "ip-spoof": "IP Spoofing",
+        # Added upstream in v1.8.4 among the direct carriers and moved onto the
+        # setup-link wizard in v1.8.5. The panel could not offer it before.
+        "sni": "SNI Spoofing",
     }
     tlabel = transport_labels.get(node["transport"], node["transport"])
     # No "e.g." placeholder as config: empty means tunnel-port-only (plus
     # UDP forwarding of it when enabled), stated plainly.
     raw_ports = (node.get("forwarded_ports") or "").strip()
-    ports = raw_ports if raw_ports else "(none — tunnel port only)"
+    ports = raw_ports if raw_ports else "(none - tunnel port only)"
     udp = "yes" if node.get("udp_forward") else "no"
+    preset = (node.get("preset") or "turbo").strip() or "turbo"
+    optional = _bp_optional(node)
+    is_direct = node["transport"] in BACKPACK_DIRECT_CARRIERS or \
+        node["transport"] in ("icmp", "udp", "quic", "tcp-pck")
+
+    # v1.8.4 moved both wizards onto this question list, and v1.8.5 ended them
+    # on a setup link instead of a second round of manual answers.
+    wizard_iran = (
+        "    Kharej address : %s\n" % node["kharej_ip"]
+        if not is_direct else
+        "    (Direct carrier: Iran dials OUT, so no Iran inbound port is needed.)\n")
     return f"""================================================================
  ZEFIRA x BACKPACK - Tunnel Setup Guide (for BackPack {BACKPACK_VERSION}+)
  Tunnel name : {node['name']}
  Transport   : {tlabel}
+ Preset      : {preset}
 ================================================================
 
-STEP 0 - Install BackPack {BACKPACK_VERSION} on BOTH servers (Iran + Kharej).
+STEP 0 - Install BackPack {BACKPACK_VERSION} on the IRAN server.
 NEVER pipe an unpinned URL to bash (upstream compromise = RCE as root).
 The block below is FAIL-CLOSED on purpose: if the download or the hash check
 fails, it stops instead of continuing to `sudo bash`. Copy it as ONE block
@@ -1227,33 +1296,44 @@ in the middle can be ignored), and run it exactly like this:
     rm -rf "$d"
 
 If sha256sum reports FAILED, stop: that file is not the one this panel was
-tested against.
+tested against. The kharej needs BackPack too - STEP 2 does that for you.
 
 ----------------------------------------------------------------
 STEP 1 - IRAN SERVER (entry point):  {node['iran_ip']}
 ----------------------------------------------------------------
 Run:  sudo backpack   ->   1. Setup Iran
-Answer the wizard exactly like this:
+Answer the wizard like this:
     Transport      : {tlabel}
     Tunnel port    : {node['tunnel_port']}
     Tunnel name    : {node['name']}
     TOKEN          : {token}
-    Exposed ports  : {ports}
+{wizard_iran}    Exposed ports  : {ports}
     Forward UDP    : {udp}
-    Preset         : Turbo
-=> COPY THE TOKEN shown by the wizard (it must match the one above).
+    Preset         : {preset}
+{optional}=> COPY THE TOKEN shown by the wizard (it must match the one above).
+=> COPY THE SETUP LINK it ends with. It starts with backpack:// and carries
+   everything the two ends must agree on, including the token - the kharej
+   must NOT be given a token of its own, upstream refuses a link that pairs
+   two different ones.
 
 ----------------------------------------------------------------
 STEP 2 - KHAREJ SERVER (exit / origin):  {node['kharej_ip']}
 ----------------------------------------------------------------
-Run:  sudo backpack   ->   2. Setup Kharej
-Answer with the SAME values:
-    Transport      : {tlabel}
-    Iran address   : {node['iran_ip']}
-    Tunnel port    : {node['tunnel_port']}
-    Tunnel name    : {node['name']}
-    TOKEN          : {token}   (same as Iran!)
-    Preset         : Turbo
+Pick ONE:
+
+  (a) The kharej already runs BackPack:
+        sudo backpack link apply '<paste the setup link from STEP 1>'
+
+  (b) The kharej has no BackPack at all - this installs it, builds the
+      tunnel, starts it and waits to say whether it connected:
+
+        BP="https://raw.githubusercontent.com/AminMGMT/BackPack/{BACKPACK_PIN_COMMIT}/install.sh"
+        bash <(curl -fsSL "$BP") link apply '<paste the setup link from STEP 1>'
+
+  Only a name is asked. Applying the SAME link again UPDATES that tunnel in
+  place - new transport, new port, same name - so this is also how you change
+  an existing tunnel after editing it here. That is new in {BACKPACK_VERSION};
+  older builds refused a link they had already applied.
 
 ----------------------------------------------------------------
 STEP 3 - Verify
@@ -1264,15 +1344,31 @@ From Zefira panel press "Check now" to probe {node['iran_ip']}:{node['tunnel_por
 
 NOTES
 -----
-* Keep the token secret - anyone holding it can join your tunnel.
-* On tcp/udp/kcp the token travels as-is: on untrusted paths prefer an
-  encrypted transport (Stealth, PCK, KCP, QUIC, WSS).
-* TCP + Stealth or WSS are the best anti-DPI transports on dirty routes.
-* WSS needs a certificate configured and answers probes with a decoy site.
-* If Iran cannot accept inbound, use Direct mode instead (wizard ->
-  Direct -> carrier): Iran dials out, no inbound port needed.
-* Not sure which transport fits? BackPack Manage -> Link Test measures
-  the route and recommends one.
+* Keep the token and the setup link secret - anyone holding the token can join
+  your tunnel.
+* Not sure which transport fits? Run Connection Test:  sudo backpack  ->  option 0.
+  It tries every transport between the two servers for real, groups the result
+  as OK / UNSTABLE / DOWN, and ends with a suggested preset, the path MTU and
+  the TCP MSS clamp it implies. Nothing is installed and nothing is left behind.
+  (This replaced Link Test, and Speed Test and Game Latency Test are gone as of
+  upstream v1.8.4.)
+* Only WSS proves the far end is really your Iran server: since {BACKPACK_VERSION}
+  the server answers the upgrade with X-Backpack-Proof, a MAC of the TLS session
+  under the tunnel token. Plain TCP, TCP Mux, WS and UDP authenticate nothing
+  about the far end, so on an untrusted path prefer WSS, or Stealth / PCK /
+  KCP / QUIC.
+* WSS needs a certificate configured, and answers probes with a decoy site.
+* If Iran cannot accept inbound, use Direct mode instead (wizard -> Direct ->
+  carrier: xDi, PCK, UDP, Quic, IP Spoofing, SNI Spoofing). Iran dials out, so
+  no inbound port is needed at all.
+* A tunnel can be capped: the panel writes <name>.quota.json beside the config
+  and the engine enforces it, taking the tunnel offline when the total is
+  reached and bringing it back within two seconds of the cap being raised. No
+  limit means infinity.
+* The built-in proxy (Manage -> Built-in Proxy, or: backpack proxy enable
+  socks5 <port> --user U --pass P) is refused for loopback, link-local,
+  unspecified and multicast destinations, so a forwarded port can no longer be
+  used to reach the server's own services or cloud metadata.
 * Open/forward the tunnel port ({node['tunnel_port']}/{'udp+tcp' if udp == 'yes' else 'tcp'}) on the Iran firewall.
 * Tunnel port can be pinned to one address (IP:port) in the wizard.
 ================================================================
