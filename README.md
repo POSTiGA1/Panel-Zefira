@@ -149,8 +149,8 @@ same code path if you need concurrent writers.
 
 ### Running the tests
 
-There are 37 test suites. 10 hit the running panel from the outside and
-27 are static guards that need nothing running. One command runs all 37:
+There are 38 test suites. 10 hit the running panel from the outside and
+28 are static guards that need nothing running. One command runs all 38:
 
 ```bash
 python run_all_tests.py http://127.0.0.1:8000 admin YOURPASS
@@ -291,6 +291,7 @@ python tools_lock.py
 python verify_lock_hashes.py
 python operability_test.py                                 # single-worker refusal, request correlation, annotation coverage
 python api_coverage_test.py                                # API reference covers every route
+python update_status_latency_test.py                # the update page never waits on GitHub
 ```
 
 > **Always run the verifier.** The lock is generated on one machine but

@@ -3949,7 +3949,111 @@ def _github_json(path: str) -> tuple:
         return False, str(exc)[:150]
 
 
-def _update_status() -> dict:
+# --- the GitHub half of the update status, off the request path -------------
+#
+# Measured before this existed: /api/update/status held the request for 12.0 s
+# here, because _github_json allows 10 s and _update_status makes up to three
+# of those calls in one request (the compare, the branch head, and the
+# signature check). The suite saw it as "got 0" - a status of 0 is the client
+# reporting a request that never completed - and the panel log had no traceback.
+# The same commit passed on the next run, which is what identified it as
+# latency rather than a regression.
+#
+# It matters beyond a slow page. This panel is enforced single-worker and this
+# is a GET a browser polls every 5 seconds, so a request parked in a 10 s
+# network timeout holds a worker thread for the whole duration: a slow link to
+# GitHub degrades the entire panel, not just the update page.
+#
+# So the local half is computed per request and is fast, and the GitHub half is
+# cached and refreshed on a daemon thread. A request waits at most
+# _UPDATE_REMOTE_WAIT on a cold cache and not at all on a warm one, so a
+# freshly started panel answers immediately with "checking upstream..." rather
+# than hanging - and the update poller, which already re-asks with ?fresh=1,
+# fills it in on its next tick.
+_UPDATE_REMOTE_TTL = 60.0
+_UPDATE_REMOTE_WAIT = 2.5
+_update_remote = {"data": None, "at": 0.0}
+_update_remote_busy = threading.Event()
+_update_remote_done = threading.Event()
+
+
+def _update_status_remote(repo: str, branch: str, local: str) -> dict:
+    """Everything here talks to GitHub. Never call this from a request."""
+    remote_sha, incoming, error = "", [], ""
+    if not local:
+        return {"remote_sha": "", "incoming": [], "error": "not a git checkout",
+                "signature": "", "signature_detail": ""}
+    okc, cmp = _github_json(f"/repos/{repo}/compare/{local}...{branch}")
+    if okc and isinstance(cmp, dict):
+        remote_sha = (cmp.get("merge_base_commit", {}) or {}).get("sha", "") or ""
+        commits = cmp.get("commits") or []
+        if commits:
+            remote_sha = commits[-1].get("sha", "") or remote_sha
+        for c in commits[:20]:
+            info = c.get("commit", {}) or {}
+            incoming.append({
+                "sha": (c.get("sha") or "")[:7],
+                "date": ((info.get("author") or {}).get("date") or "")[:10],
+                "message": (info.get("message") or "").splitlines()[0][:200] if info.get("message") else "",
+            })
+    else:
+        error = cmp if isinstance(cmp, str) else "GitHub compare failed"
+    if not remote_sha and not error:
+        okc, latest = _github_json(f"/repos/{repo}/commits/{branch}?per_page=1")
+        if okc and isinstance(latest, dict) and latest.get("sha"):
+            remote_sha = latest.get("sha", "")
+        elif okc and isinstance(latest, list) and latest:
+            remote_sha = latest[0].get("sha", "")
+        elif not okc:
+            error = latest if isinstance(latest, str) else "GitHub unreachable"
+    ver_state, ver_detail = _commit_verification(repo, remote_sha) if remote_sha else ("", "")
+    return {"remote_sha": remote_sha, "incoming": incoming, "error": error,
+            "signature": ver_state, "signature_detail": ver_detail}
+
+
+def _remote_refresh(repo: str, branch: str, local: str) -> None:
+    try:
+        data = _update_status_remote(repo, branch, local)
+    except Exception as exc:            # a dead thread must not wedge the cache
+        data = {"remote_sha": "", "incoming": [], "error": str(exc)[:150],
+                "signature": "", "signature_detail": ""}
+    _update_remote["data"] = data
+    _update_remote["at"] = time_mod.monotonic()
+    _update_remote_done.set()
+    _update_remote_busy.clear()
+
+
+def _update_remote_half(repo: str, branch: str, local: str, wait: float,
+                        force: bool = False) -> dict:
+    """The cached GitHub half, starting a refresh if it is cold or stale."""
+    data = _update_remote["data"]
+    if (not force and data is not None
+            and time_mod.monotonic() - _update_remote["at"] < _UPDATE_REMOTE_TTL):
+        return data
+    if not _update_remote_busy.is_set():
+        _update_remote_busy.set()
+        _update_remote_done.clear()
+        threading.Thread(target=_remote_refresh, args=(repo, branch, local),
+                         daemon=True).start()
+    if wait > 0:
+        _update_remote_done.wait(timeout=wait)
+    data = _update_remote["data"]
+    if data is None:
+        # Still nothing. Say so rather than reporting an empty remote as "no
+        # update available": a silent empty string reads as "you are up to
+        # date" during exactly the outage it exists to flag.
+        return {"remote_sha": "", "incoming": [], "error": "checking upstream...",
+                "signature": "", "signature_detail": ""}
+    return data
+
+
+def _update_status(wait: float = _UPDATE_REMOTE_WAIT, force: bool = False) -> dict:
+    """Assemble the status payload.
+
+    `wait` bounds how long this call may spend waiting for the GitHub half;
+    0.0 means do not wait for it at all, which is what a plain page load wants.
+    `force` re-fetches the GitHub half instead of serving the cached one.
+    """
     repo, branch, _ = _update_conf()
     try:
         version = (BASE_DIR / "VERSION").read_text(encoding="utf-8").strip()
@@ -3965,40 +4069,18 @@ def _update_status() -> dict:
                 parts = line.split("|", 2)
                 if len(parts) == 3:
                     local_log.append({"sha": parts[0][:7], "date": parts[1], "message": parts[2][:200]})
-    remote_sha, remote_date, incoming = "", "", []
-    error = ""
-    if local:
-        okc, cmp = _github_json(f"/repos/{repo}/compare/{local}...{branch}")
-        if okc and isinstance(cmp, dict):
-            remote_sha = (cmp.get("merge_base_commit", {}) or {}).get("sha", "") or ""
-            commits = cmp.get("commits") or []
-            if commits:
-                remote_sha = commits[-1].get("sha", "") or remote_sha
-            for c in commits[:20]:
-                info = c.get("commit", {}) or {}
-                incoming.append({
-                    "sha": (c.get("sha") or "")[:7],
-                    "date": ((info.get("author") or {}).get("date") or "")[:10],
-                    "message": (info.get("message") or "").splitlines()[0][:200] if info.get("message") else "",
-                })
-            remote_date = incoming[-1]["date"] if incoming else ""
-        else:
-            error = cmp if isinstance(cmp, str) else "GitHub compare failed"
-    else:
-        error = "not a git checkout"
-    if not remote_sha and not error:
-        okc, latest = _github_json(f"/repos/{repo}/commits/{branch}?per_page=1")
-        if okc and isinstance(latest, dict) and latest.get("sha"):
-            remote_sha = latest.get("sha", "")
-        elif okc and isinstance(latest, list) and latest:
-            remote_sha = latest[0].get("sha", "")
-        elif not okc:
-            error = latest if isinstance(latest, str) else "GitHub unreachable"
+    # The only step here that leaves the machine - and it no longer leaves it
+    # from inside the request.
+    rem = _update_remote_half(repo, branch, local, wait, force)
+    remote_sha = rem.get("remote_sha", "")
+    incoming = rem.get("incoming") or []
+    error = rem.get("error", "")
+    ver_state = rem.get("signature", "")
+    ver_detail = rem.get("signature_detail", "")
     try:
         unit_warning = _unit_stale_warning()
     except Exception:
         unit_warning = ""
-    ver_state, ver_detail = _commit_verification(repo, remote_sha) if remote_sha else ("", "")
     return {
         "repo": repo,
         "branch": branch,
@@ -4043,14 +4125,14 @@ def api_update_status(request: Request, admin: Admin = Depends(require_admin)):
         # calls, none of them charged to the limiter. Wait for the refresh in
         # flight and read what it produced.
         if not _update_status_lock.acquire(timeout=8.0):
-            return ent[0] if ent else _update_status()
+            return ent[0] if ent else _update_status(wait=0.0)
         try:
             done = _settings_cache.get("__update_status__")
         finally:
             _update_status_lock.release()
         if done:
             return done[0]
-        return ent[0] if ent else _update_status()
+        return ent[0] if ent else _update_status(wait=0.0)
     try:
         if fresh:
             if not update_status_limiter.hit(f"updst|{admin.id}"):
@@ -4060,7 +4142,9 @@ def api_update_status(request: Request, admin: Admin = Depends(require_admin)):
             ent = _settings_cache.get("__update_status__")
             if ent and now - ent[1] < 10.0:
                 return ent[0]
-        out = _update_status()
+        # A plain read must not wait on the network; ?fresh=1 is the update
+        # poller, and it is the one call allowed to.
+        out = _update_status(wait=_UPDATE_REMOTE_WAIT if fresh else 0.0, force=fresh)
         _settings_cache["__update_status__"] = (out, time_mod.monotonic())
         return out
     finally:

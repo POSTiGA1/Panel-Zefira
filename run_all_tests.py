@@ -92,6 +92,11 @@ OFFLINE_SUITES = [
     ("security_hardening_test.py", "audit hardening: secret disclosure budgets, fail-closed scopes"),
     ("subscription_token_test.py", "the subscription bearer token is not readable at rest"),
     ("operability_test.py", "single-worker refusal, request correlation, annotation coverage"),
+    # /api/update/status held its request for 12 s on a slow link, because
+    # the route made up to three 10 s GitHub calls inline and the panel is
+    # single-worker. Measured against a live panel: 12.00 s before, 0.23 s
+    # cold and 0.025 s warm after, with the GitHub half on a daemon thread.
+    ("update_status_latency_test.py", "update page never waits on GitHub"),
     ("installer_guard_test.py", "installer symlink + banner guards"),
     # The four READMEs, compared rather than eyeballed: a translation that drops
     # a number, an address or a code fence is worse than none, because the reader
