@@ -149,8 +149,8 @@ same code path if you need concurrent writers.
 
 ### Running the tests
 
-There are 39 test suites. 10 hit the running panel from the outside and
-29 are static guards that need nothing running. One command runs all 39:
+There are 40 test suites. 10 hit the running panel from the outside and
+30 are static guards that need nothing running. One command runs all 40:
 
 ```bash
 python run_all_tests.py http://127.0.0.1:8000 admin YOURPASS
@@ -293,6 +293,7 @@ python operability_test.py                                 # single-worker refus
 python api_coverage_test.py                                # API reference covers every route
 python update_status_latency_test.py                # the update page never waits on GitHub
 python backpack_tunnel_test.py             # BackPack v1.8.5 tunnel capabilities
+python ai_url_guard_test.py               # the AI fetch URL matches its validated base
 ```
 
 > **Always run the verifier.** The lock is generated on one machine but

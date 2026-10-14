@@ -102,6 +102,11 @@ OFFLINE_SUITES = [
     # those releases retired. 99 checks over the pin, the sni carrier, the
     # four per-tunnel options and every guide line, each proved red.
     ("backpack_tunnel_test.py", "BackPack v1.8.5 tunnel capabilities"),
+    # The AI fetch validates eff_base, pins its IP and strips the key for
+    # local targets, then fetches a `url` it built separately. The safety
+    # rests on the two agreeing, and only reading enforced that. Measured:
+    # all four providers agree today; this fails when a fifth does not.
+    ("ai_url_guard_test.py", "AI fetch URL matches its validated base"),
     ("installer_guard_test.py", "installer symlink + banner guards"),
     # The four READMEs, compared rather than eyeballed: a translation that drops
     # a number, an address or a code fence is worse than none, because the reader

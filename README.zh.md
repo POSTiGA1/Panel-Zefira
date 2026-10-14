@@ -113,7 +113,7 @@ python -m uvicorn main:app --host 127.0.0.1 --port 8000 --no-server-header --no-
 ### 运行测试
 
 这些测试套件从外部打击运行中的面板。先启动面板，然后逐个运行（套件之间重启面板）。也可以一次跑完：`python run_all_tests.py admin YOURPASS`。各套件之间互不依赖顺序，结束时都会把面板恢复到出厂默认设置。
-共 39 套测试：10 套在线（需要正在运行的面板），29 套静态守卫（无需任何东西）。
+共 40 套测试：10 套在线（需要正在运行的面板），30 套静态守卫（无需任何东西）。
 
 
 **在线套件（10 个）**——需要正在运行的面板：
@@ -133,7 +133,7 @@ python settings_cards_test.py http://127.0.0.1:8000 admin YOURPASS  # 逐一端�
 
 `feature_test.py` 走遍 11 个面板分区里的全部 67 条 API 路由，并断言每项能力**确实可用**（订阅里有真实链接、二维码可解码、配置压缩包可用、机器人 scope 矩阵、备份/恢复往返等），而不只是「能访问」。`attack_test.py` 会自己发起攻击流量：请求头伪造、存储型 XSS、路径穿越、超大/深层嵌套请求体、Unicode/编码技巧、时间侧信道、登录洪水、限流器逐出尝试，以及完整的鉴权矩阵。
 
-**无需服务器（29 个套件）**——它们执行真实代码而不是只读代码，因为下面每一个缺陷都通过了源码级审查：
+**无需服务器（30 个套件）**——它们执行真实代码而不是只读代码，因为下面每一个缺陷都通过了源码级审查：
 
 ```bash
 python installer_test.py          # 安装脚本的保证，做成静态守卫
@@ -163,6 +163,7 @@ python readme_i18n_test.py  # README 各语言版本的一致性
 python harness_login_test.py  # 测试工具可以登录管理员
 python update_status_latency_test.py                  # 更新页面从不在 GitHub 上等待
 python backpack_tunnel_test.py               # BackPack v1.8.5 的隧道能力
+python ai_url_guard_test.py                 # AI 请求的 URL 与其已校验的基址一致
 ```
 
 **无需服务器（2 个 Node 脚本）**——面向文档站点的四种语言：

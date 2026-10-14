@@ -1,4 +1,4 @@
-"""The public site assistant must not tell visitors about an old release.
+r"""The public site assistant must not tell visitors about an old release.
 
 docs/assets/site-knowledge.json answered "what is new?" with v1.13.3 while the
 panel was on v1.15.23 - twenty-one releases of security work that the assistant
@@ -12,6 +12,12 @@ prints the same gap and the commit subjects needed to close it.
 
 Each assertion is also checked against a mutated copy of the real file, so a
 guard that cannot go red is reported rather than trusted.
+
+It also reads the changelog the way a reader does. It used to extract
+<h2 id="v(\d+)>, so it was confident about an id nobody sees: v1.15.39
+shipped a heading displaying v1.15.38, the only duplicated version number
+in 41, and eleven ascending inversions buried the shipped release 12th of
+41. And "every locale is non-empty" let seven U+FFFD through the same file.
 """
 import io
 import json
@@ -46,6 +52,38 @@ def newest_version(text):
     return "v" + found[0] if found else None
 
 
+def cur_head_section(changelog, cur):
+    """The whole section (h2 + its <ul>) whose heading SHOWS `cur`.
+
+    Not re.search over the file: that returns the first versioned section,
+    v1.15.28, and every ordering mutation then talks about the wrong entry.
+    """
+    m = re.search(r'<h2 id="v\d+"><span>%s</span>.*?</ul>(?:\r\n|\r|\n){2}'
+                  % re.escape(cur), changelog, re.S)
+    assert m, "the shipped version %s has no complete section" % cur
+    return m.group(0)
+
+
+def _descending(shown):
+    """True when the shown version numbers only ever get OLDER down the list.
+
+    Newest first, so each heading must be older than the one above it. The
+    comparison is `key(shown[i]) < key(shown[i - 1])` - written the other way
+    round it asserts ASCENDING order, which is exactly the misordering this
+    check exists to catch, so it would have passed the bug and failed the fix.
+
+    An inversion is a heading that is NEWER than the one above it, so a reader
+    scrolling meets an older release after a newer one. v1.15.39 shipped at
+    position 12 of 41 because twelve releases stacked above a hardcoded anchor
+    instead of above the newest heading.
+    """
+    def key(v):
+        a, b, c = v[1:].split(".")
+        return (int(a), int(b), int(c))
+    return bool(shown) and all(key(shown[i]) < key(shown[i - 1])
+                               for i in range(1, len(shown)))
+
+
 def checks(kb, version, changelog):
     e = entry(kb)
     cur = "v" + version.strip()   # VERSION holds bare digits, the entry has "v"
@@ -56,12 +94,37 @@ def checks(kb, version, changelog):
     out["the entry still exists"] = e is not None
     out["every locale is non-empty"] = e is not None and all(
         e.get(loc) for loc in LOCALES)
+    # NOT enough on its own. Seven U+FFFD shipped through the check above,
+    # because a string made entirely of replacement characters is non-empty.
+    # These are the assistant's own sentences, read by every visitor in those
+    # locales, so "it is a string" is not the property anyone depends on.
+    out["every locale decodes without a replacement character"] = (
+        e is not None and all("\ufffd" not in (e.get(loc) or "")
+                              for loc in LOCALES))
     out["the full changelog is still linked"] = (
         e is not None and any(l.get("href") == "changelog.html" for l in (e.get("links") or [])))
     # The site also has a real changelog page; the assistant must not claim to
     # cover releases the page does not list without the gap being visible.
     page = set(re.findall(r'<h2 id="v(\d+)">', changelog))
     out["changelog.html has versioned entries"] = len(page) >= 7
+
+    # Everything above this line reads the h2 ID. A reader reads the number in
+    # the <span>, and those two disagreed: v1.15.39 shipped a heading displaying
+    # v1.15.38, the only duplicated version number in the file. The ID was
+    # checked and the label was not, so the guard was green over a wrong page.
+    shown = re.findall(r'<h2 id="v\d+"><span>(v\d+\.\d+\.\d+)</span>', changelog)
+    counts = {}
+    for v in shown:
+        counts[v] = counts.get(v, 0) + 1
+    out["no two changelog headings show the same version"] = (
+        bool(shown) and all(c == 1 for c in counts.values()))
+    # NOT "shown[0] == cur": measured, the headings do not run newest-first
+    # (the 1.15.28..1.15.39 block is ascending), so that assertion is false of
+    # the real file. Asserting it would be writing the bug into the guard.
+    out["the shipped version has a changelog heading of its own"] = cur in shown
+    out["the changelog runs newest first"] = _descending(shown)
+    out["every changelog heading shows a version number"] = (
+        len(shown) == len(re.findall(r'<h2 id="v\d+">', changelog)))
     return out
 
 
@@ -100,23 +163,99 @@ def main():
 
     print()
     print("== 3. each assertion can fail: roll the file back, it must go red ==")
-    # Two mutations, both on a copy: age the English entry, and drop the link.
+    # Five mutations, all on copies: the two knowledge-base ones, and three
+    # that relabel a heading the way a reader would notice.
     import copy
     mutations = []
 
     stale = copy.deepcopy(kb)
     se = entry(stale)
     se["text"] = re.sub(r"v1\.\d+\.\d+", "v1.13.3", se["text"], count=1)
-    mutations.append(("age the English entry", stale,
+    mutations.append(("age the English entry", stale, changelog,
                       ["assistant mentions the shipped version (text)"]))
 
     unlinked = copy.deepcopy(kb)
     entry(unlinked)["links"] = []
-    mutations.append(("drop the changelog link", unlinked,
+    mutations.append(("drop the changelog link", unlinked, changelog,
                       ["the full changelog is still linked"]))
 
-    for name, mutated, must_go_red in mutations:
-        after = checks(mutated, version, changelog)
+    # The failure that actually shipped. A replacement character is invisible in
+    # a diff unless you count them, and non-empty to every other assertion -
+    # which is the point, so "every locale is non-empty" is deliberately NOT
+    # listed as something that must go red. It is reported alongside instead,
+    # because "this check still passes while the page is corrupt" is the
+    # finding, not a test failure.
+    for loc in ("fa", "zh"):
+        c = copy.deepcopy(kb)
+        t = entry(c)[loc]
+        entry(c)[loc] = t[:40] + "\ufffd\ufffd" + t[40:]
+        mutations.append((
+            "ship U+FFFD in %s" % loc, c, changelog,
+            ["every locale decodes without a replacement character"]))
+
+    # Headings are read by eye, so the mutations have to be too. The first
+    # reproduces the shipped bug exactly: the newest heading wearing the
+    # previous release's number.
+    cur = "v" + version.strip()
+    newest = re.search(r'<h2 id="(v\d+)"><span>%s</span>' % re.escape(cur), changelog)
+    assert newest, "the shipped version has no heading to mutate"
+    newer_id, shown_now = newest.group(1), cur
+
+    def relabel(text, old_id, old_shown, new_shown):
+        before = '<h2 id="%s"><span>%s</span>' % (old_id, old_shown)
+        assert text.count(before) == 1, "relabel anchor not unique"
+        return text.replace(before, '<h2 id="%s"><span>%s</span>'
+                            % (old_id, new_shown), 1)
+
+    back = relabel(changelog, newer_id, shown_now, "v1.15.0")
+    mutations.append(("ship the v1.15.38 bug again", kb, back,
+                      ["no two changelog headings show the same version",
+                       "the shipped version has a changelog heading of its own"]))
+
+    # Not a duplicate: a wrong label that no count would catch. Proves the
+    # shipped-version check is not merely a duplicate detector.
+    ahead = relabel(changelog, newer_id, shown_now, "v9.9.9")
+    mutations.append(("label it v9.9.9", kb, ahead,
+                      ["the shipped version has a changelog heading of its own"]))
+
+    # The ordering itself. Swap the shipped heading with the one directly above
+    # it, which is exactly what the hardcoded anchor produced for twelve
+    # releases, and nothing about labels or counts changes.
+    sect = cur_head_section(changelog, cur)
+    i = changelog.index(sect)
+    # Swap with ONE neighbouring section so the move is exactly one position and
+    # nothing about labels or counts changes. Which neighbour depends on where
+    # the shipped heading already sits: today it is first, so it has to go
+    # below the next one. Assuming a section exists above it only worked while
+    # the file was still misordered.
+    SECP = r'<h2 id="v\d+">.*?</ul>(?:\r\n|\r|\n){2}'
+    above = list(re.finditer(SECP, changelog[:i], re.S))
+    below = list(re.finditer(SECP, changelog[i + len(sect):], re.S))
+    assert above or below, "the shipped heading has no neighbour to swap with"
+    if above:
+        p, q = above[-1], None
+        swapped = (changelog[:p.start()] + sect + changelog[p.end():i]
+                   + p.group(0) + changelog[i + len(sect):])
+    else:
+        n = below[0]
+        s2 = changelog[i + len(sect):]
+        swapped = (changelog[:i] + n.group(0) + sect + s2[n.end():])
+    assert swapped != changelog
+    assert len(swapped) == len(changelog), "the swap changed the byte length"
+    assert sorted(re.findall(r"<span>(v[\d.]+)</span>", swapped)) == sorted(
+        re.findall(r"<span>(v[\d.]+)</span>", changelog)), "the swap lost a label"
+    mutations.append(("bury the shipped release", kb, swapped,
+                      ["the changelog runs newest first"]))
+
+    # Strip the label entirely: the reader sees no version at all.
+    bare = relabel(changelog, newer_id, shown_now, "")
+    bare = bare.replace('<h2 id="%s"><span></span>' % newer_id,
+                        '<h2 id="%s">' % newer_id, 1)
+    mutations.append(("leave the newest heading unlabelled", kb, bare,
+                      ["every changelog heading shows a version number"]))
+
+    for name, mutated, mutated_changelog, must_go_red in mutations:
+        after = checks(mutated, version, mutated_changelog)
         still = [g for g in must_go_red if after[g]]
         if still:
             print("   %-30s FAIL (stayed green: %s)" % (name, ", ".join(still)))
