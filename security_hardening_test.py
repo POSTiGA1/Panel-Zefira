@@ -181,6 +181,37 @@ def source_checks():
     # protect the operator's master key, CA and database from `git reset --hard`
     # had never once run, and failed in the one way that reads like a disk
     # problem. The check below calls it instead.
+    # 7. The first-run banner must not claim a protection it did not apply.
+    #
+    # It used to chmod the credentials file to 0600 inside `except OSError:
+    # pass` and then print "(mode 600)" either way. On a filesystem that refuses
+    # the chmod the file keeps the umask's bits - 0644 on a default Linux umask,
+    # readable by every local user - while the operator was told it was private
+    # and deleted it when they were done. The password is the admin's, and it is
+    # printed nowhere else precisely because the journal is readable by the adm
+    # group.
+    #
+    # Not made fatal on purpose: this runs on first boot, and a panel that
+    # refused to start would leave the operator with no admin account at all.
+    # The defect was the UNCONDITIONAL claim, so that exact line must be gone.
+    # My first attempt here tested `re.search(r"cred_private\)", main)`, which
+    # is right in spirit and wrong in fact: in the source the guard reads
+    # `if cred_private` followed by a NEWLINE, so the pattern never matched and
+    # the check failed on a correct file. Asserting the absence of the old line
+    # says what is actually wrong.
+    check("the (mode 600) claim is no longer unconditional",
+          'print(f"  PASSWORD: written to {cred_path} (mode 600)")' not in main,
+          "the banner still states a mode the code never confirmed")
+    check("a chmod failure on the credentials file is reported, not swallowed",
+          "chmod failed" in main and "MODE 600 COULD NOT BE SET" in main)
+    check("a failed chmod still tells the operator what to run",
+          "chmod 600" in main)
+    check("a failed chmod does not stop the panel starting",
+          "cred_private = False" in main
+          and "raise" not in main[main.index("cred_private = False"):
+                                   main.index("cred_private = False") + 140],
+          "it re-raises, which would leave a first boot with no admin")
+
     check("the names the updater depends on are still in the source",
           "_prune_pre_update_snapshots" in main
           and "_snapshot_runtime_state" in main,
@@ -333,6 +364,12 @@ MUTATIONS = [
     # snapshot without importing it, so both died on their first line with
     # NameError - and NameError is not OSError, so the prune's own guard did not
     # catch it. Removing the module-level import reproduces exactly that.
+    ("the first-run banner claims a mode it did not set", "mode600",
+     lambda s: s.replace(
+         '"  PASSWORD: written to {cred_path} ("\n'
+         '                          + ("mode 600)" if cred_private\n'
+         '                             else "MODE 600 COULD NOT BE SET)"))',
+         '"  PASSWORD: written to {cred_path} (mode 600)")')),
     ("INSTANCE_DIR imported where it is used", "instancedir",
      lambda s: s.replace("\nfrom config import INSTANCE_DIR\n", "\n", 1)),
 ]
@@ -404,6 +441,9 @@ def main():
         # NameError - which is not OSError, so the prune's own guard could not
         # catch it. The functions were present the entire time the feature was
         # dead, which is why the old name-based check passed.
+        if "MODE 600 COULD NOT BE SET" not in m:
+            bad.append(("mode600",
+                        "the first-run banner claims a mode the code never set"))
         if "from config import INSTANCE_DIR" not in m:
             bad.append(("instancedir",
                         "INSTANCE_DIR is not imported, so the snapshot raises "

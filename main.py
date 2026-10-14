@@ -1384,14 +1384,39 @@ async def lifespan(_: FastAPI):
                         "  !! DELETE THIS FILE WHEN YOU ARE DONE !!\n",
                         encoding="utf-8",
                     )
+                    # Report what actually happened rather than what was asked
+                    # for. On a filesystem that refuses the chmod - an
+                    # ACL-governed mount, some overlay and network mounts, a
+                    # container volume with a fixed mode - the file keeps the
+                    # umask's bits, which is 0644 on a default Linux umask:
+                    # readable by every local user. The old code printed
+                    # "(mode 600)" either way, so the operator deleted the file
+                    # when they were done and never learned it had been open.
+                    #
+                    # Not made fatal on purpose: this runs on first boot, and a
+                    # panel that refused to start would leave the operator with
+                    # no admin account at all. A loud warning is the right
+                    # severity - the password is the admin's, and it is printed
+                    # nowhere else precisely because the journal is readable by
+                    # the adm group.
                     try:
                         os.chmod(cred_path, 0o600)
-                    except OSError:
-                        pass
+                        cred_private = True
+                    except OSError as exc:
+                        cred_private = False
+                        cred_reason = str(exc)
                     print("=" * 58)
                     print("  ZEFIRA PANEL - FIRST RUN")
                     print(f"  USERNAME: {username}")
-                    print(f"  PASSWORD: written to {cred_path} (mode 600)")
+                    print(f"  PASSWORD: written to {cred_path} ("
+                          + ("mode 600)" if cred_private
+                             else "MODE 600 COULD NOT BE SET)"))
+                    if not cred_private:
+                        print(f"  !! chmod failed: {cred_reason}")
+                        print("  !! THIS FILE MAY BE READABLE BY OTHER USERS ON")
+                        print("  !! THIS HOST. Fix its permissions now:")
+                        print(f"  !!   chmod 600 {cred_path}")
+                        print("  !! then log in, change the password, delete it.")
                     print("  !! CHANGE THE PASSWORD AFTER LOGIN, THEN DELETE THAT FILE !!")
                     print("=" * 58)
                 except OSError as exc:
