@@ -7,7 +7,7 @@
 <meta name="referrer" content="no-referrer">
 <title data-i18n="docs.titleSecurity">Security — Zefira Docs</title>
 <link rel="icon" href="assets/logo.png">
-<link rel="stylesheet" href="assets/style.css?v=59">
+<link rel="stylesheet" href="assets/style.css?v=61">
 </head>
 <body>
 <header class="topbar">
@@ -70,7 +70,7 @@
 </table>
 
 <h2 id="penetration-test-suite" data-i18n="sec.pentTitle">Penetration-test suite</h2>
-<p><code>security_test.py</code> <span data-i18n="sec.pentA">attacks a live panel: auth boundary, JWT forgery (alg=none, tampering, bad signature), rate limits, CSRF, mass assignment, backup/restore atomicity, fuzzing, XSS sources, header checks — currently</span> <b data-i18n="sec.pentBold">117/117 passing</b><span data-i18n="sec.pentB">:</span></p>
+<p><code>security_test.py</code> <span data-i18n="sec.pentA">attacks a live panel: auth boundary, JWT forgery (alg=none, tampering, bad signature), rate limits, CSRF, mass assignment, backup/restore atomicity, fuzzing, XSS sources, header checks —</span> <b data-i18n="sec.pentBold">green on every release</b><span data-i18n="sec.pentB">:</span></p>
 <pre>.venv\Scripts\python security_test.py http://127.0.0.1:8000 admin YOUR_PASSWORD</pre>
 <div class="callout warn"><span data-i18n="sec.warnA">Restore/atomicity tests wipe users. The suite refuses to run against a panel with users unless you pass</span> <code>--allow-live</code> <span data-i18n="sec.warnB">— back up first.</span></div>
 
@@ -98,8 +98,8 @@
 </main>
 </div>
 <footer>Zefira · <span data-i18n="docs.footMit">MIT License</span> · <a href="https://github.com/mrlurix/zefira-panel">github.com/mrlurix/zefira-panel</a></footer>
-<script src="assets/i18n.js?v=59"></script>
-<script src="assets/docs.js?v=59"></script>
-<script src="assets/support-ai.js?v=59"></script>
+<script src="assets/i18n.js?v=61"></script>
+<script src="assets/docs.js?v=61"></script>
+<script src="assets/support-ai.js?v=61"></script>
 </body>
 </html>

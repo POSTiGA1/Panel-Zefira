@@ -34,13 +34,13 @@ curl -fsSL https://raw.githubusercontent.com/mrlurix/zefira-panel/main/install.s
 ```bash
 d="$(mktemp -d)"                       # 只有你自己能读的私有目录
 curl -fsSL -o "$d/install.sh" \
-  https://raw.githubusercontent.com/mrlurix/zefira-panel/v1.15.16/install.sh
+  https://raw.githubusercontent.com/mrlurix/zefira-panel/v1.15.41/install.sh
 less "$d/install.sh"
 sudo bash "$d/install.sh"
 rm -rf "$d"
 ```
 
-> 两种都可以。单行版本会把当时上游提供的任何代码直接管进 root shell，所以如果你在意**以 root 身份运行的是哪份代码**，就用第二种：它落在 `mktemp` 刚刚为你创建的目录里（固定的 `/tmp/zefira-inst` 可能已被本地其他用户预先创建，而 `mkdir -p` 会在一个自己并不拥有的目录上静默成功），并且 `v1.15.16` 这个 tag 固定了安装脚本本身。
+> 两种都可以。单行版本会把当时上游提供的任何代码直接管进 root shell，所以如果你在意**以 root 身份运行的是哪份代码**，就用第二种：它落在 `mktemp` 刚刚为你创建的目录里（固定的 `/tmp/zefira-inst` 可能已被本地其他用户预先创建，而 `mkdir -p` 会在一个自己并不拥有的目录上静默成功），并且 `v1.15.41` 这个 tag 固定了安装脚本本身。
 >
 > 随后安装脚本会按它自带的发布 tag 克隆面板源码。如果你想更严格地固定到具体提交：
 >
@@ -86,12 +86,12 @@ python -m uvicorn main:app --host 127.0.0.1 --port 8000 --no-server-header --no-
 - 入站：为每个协议定义额外的端口/主机，每个用户都会得到全部对应的链接。可以把入站固定到服务器节点——离线节点会自动从链接中排除。
 - 服务器节点：登记远程服务器，每 5 分钟健康检查、延迟和在线率；支持按需检查、启用/禁用、安全删除。
 - 反审查：在面板内生成 REALITY 密钥，链接使用 `xtls-rprx-vision` 并自动轮换 SNI。
-- BackPack 隧道节点：为你的伊朗/境外服务器创建隧道，下载已填好 token 的配置指南，并检查伊朗一侧是否可达。
+- BackPack 隧道节点：为你的伊朗/境外服务器创建隧道，下载已填好 token 的配置指南，并检查伊朗一侧是否可达。面板已固定在 BackPack **v1.8.5**，并把它的新选项做成真实字段：每条隧道的**流量上限**、两端的**重启计划**、在伊朗主机失联时接管的**备用地址**，以及**性能预设**（`turbo` / `aggressive` / `conservative` / `custom`）。每条隧道还自带用于伪装 carrier 的 **SNI**。
 - 每个订阅都有二维码，配置可下载 ZIP。
 - AI 助手气泡：仅面板内的助手（优先 Groq，也支持 OpenAI/Anthropic/Gemini/Ollama），面向新手。
 - 面板内一键从 GitHub 更新，并可预览变更日志。
-- API token（`zfp_…` bearer）供 Telegram 机器人和看板使用——无需 CSRF 头。scope：`full` 或最小权限的 `bot`（仅列出/创建用户）。
-- 完整个性化：主题色、品牌名称、面板留言。
+- **Developer API**：带作用域的 token（`zfp_…` bearer）供 Telegram 机器人和看板使用——无需 CSRF 头。作用域：`full`，或最小权限的 `bot`（仅列出/创建用户）。面板内的 Developer API 区域可以列出你的 token、新建一个，并给出可直接运行的示例。
+- 完整个性化：主题色、品牌名称、面板留言——此外还有可重排、可精简的**菜单布局**（Dashboard、Users、Inbounds、Personalize 与 Settings 始终保留），以及客户仪表板上逐张卡片的显示/隐藏。
 - 敏感操作有强密码校验、完整审计日志、系统统计、可选的 Telegram 通知。
 - JSON 备份/恢复（两者都需确认密码），可选加密备份。还能导入/导出全部设置。
 - 以无特权 `zefira` 系统用户运行（绝不 root）；订阅上强制执行流量配额。

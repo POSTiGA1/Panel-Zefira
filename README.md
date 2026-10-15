@@ -36,7 +36,7 @@ Prefer to read it first? Download, look, then run that exact copy:
 ```bash
 d="$(mktemp -d)"                       # a private dir only you can read
 curl -fsSL -o "$d/install.sh" \
-  https://raw.githubusercontent.com/mrlurix/zefira-panel/v1.15.16/install.sh
+  https://raw.githubusercontent.com/mrlurix/zefira-panel/v1.15.41/install.sh
 less "$d/install.sh"
 sudo bash "$d/install.sh"
 rm -rf "$d"
@@ -46,7 +46,7 @@ rm -rf "$d"
 > straight into a root shell, so if you care which code runs as root, use the
 > second form: it lands in a directory `mktemp` just created for you (a fixed
 > `/tmp/zefira-inst` could be pre-created by another local user, and `mkdir -p`
-> succeeds silently on a directory it does not own), and the `v1.15.16` tag pins
+> succeeds silently on a directory it does not own), and the `v1.15.41` tag pins
 > the installer itself.
 >
 > The installer then clones the panel source at the release tag it ships with.
@@ -104,12 +104,12 @@ Default login: `http://YOUR_SERVER_IP:8000`
 - Inbounds: define extra ports/hosts per protocol and every user gets links for all of them. Pin inbounds to server nodes — offline nodes are auto-excluded from links.
 - Server nodes: register remote servers with 5-minute health checks, latency and uptime; on-demand check, enable/disable, safe delete.
 - Anti-censorship: generate REALITY keys inside the panel, links use `xtls-rprx-vision` and rotate SNI automatically.
-- BackPack tunnel nodes: create tunnels for your Iran/Kharej servers, download the setup guide with the token already filled in, and check if the Iran side is reachable.
+- BackPack tunnel nodes: create tunnels for your Iran/Kharej servers, download the setup guide with the token already filled in, and check if the Iran side is reachable. The panel is pinned to BackPack **v1.8.5** and exposes its newer options as real fields: a per-tunnel **traffic cap**, a **restart schedule** for both ends, **backup addresses** that fail over when the Iran host stops answering, and a **performance preset** (`turbo` / `aggressive` / `conservative` / `custom`). Each tunnel also carries its own **SNI** for the spoofing carrier.
 - QR codes for every subscription, ZIP download for configs.
 - AI assistant bubble: panel-only helper (Groq-first, OpenAI/Anthropic/Gemini/Ollama) for beginners.
 - One-click updates from GitHub with changelog preview, right inside the panel.
-- API tokens (`zfp_…` bearer) for Telegram bots and dashboards — no CSRF header needed. Scopes: `full` or least-privilege `bot` (list/create users only).
-- Full personalization: theme colors, brand name, dashboard message.
+- **Developer API**: scoped tokens (`zfp_…` bearer) for Telegram bots and dashboards — no CSRF header needed. Scopes: `full`, or least-privilege `bot` (list/create users only). The in-panel Developer API section lists your tokens, creates one and shows a ready-to-run example.
+- Full personalization: theme colors, brand name, dashboard message — plus a **menu layout** you can reorder and trim (Dashboard, Users, Inbounds, Personalize and Settings always stay), and per-card show/hide on the customer dashboard itself.
 - Strong password gate on sensitive actions, full audit log, system stats, Telegram notifications if you want.
 - JSON backup / restore (both password confirmed), optional encrypted backups. Also imports/exports all settings.
 - Runs as an unprivileged `zefira` systemd user (never root); volume quota enforced on subscriptions.
@@ -221,7 +221,7 @@ stale asset version in a `fetch()` URL). All nine restore the panel to its
 shipped defaults afterwards, so the suites are
 order-independent and can run against a live panel (or all of them in one go with
 `python run_all_tests.py admin YOURPASS`). A green run ends with
-`37/37 suites passed` - ten live suites plus twenty-seven that need no server. The
+`N/N suites passed` - ten live suites plus the rest that need no server. The
 per-suite counts are deliberately **not** written down here: they move every
 time a check is added, and a copied number that has drifted is worse than no
 number, because it reads as something to compare against. Read them off the run

@@ -25,8 +25,15 @@ def check(label, cond, detail=""):
 
 # Facts that must survive translation. Each is a number or a hash a reader could
 # act on, so a dropped one is a real defect rather than a stylistic difference.
+# Derived, never frozen. This entry used to be the literal "v1.15.16", and the
+# four READMEs used to say v1.15.16, so the check and the staleness agreed with
+# each other for twenty-four releases and the suite stayed green the whole time.
+# A fact that has to be retyped by hand is a fact that will silently stop
+# meaning anything; this one is the shipped version or it is a defect.
+_SHIPPED = "v" + io.open("VERSION", encoding="utf-8").read().strip()
+
 FACTS = [
-    ("v1.15.16", "the pinned release in the read-before-you-run example"),
+    (_SHIPPED, "the pinned release in the read-before-you-run example"),
     ("129%2F129", "the pentest badge"),
     ("instance/first-run-credentials.txt", "where first-run credentials land"),
     ("instance/secret.key", "the encryption key path"),
@@ -142,6 +149,8 @@ TOTAL = _counts["SUITES"] + _counts["OFFLINE_SUITES"]
 ONLINE = _counts["SUITES"]
 OFFLINE = _counts["OFFLINE_SUITES"]
 TOTAL_FOR_PROOF = TOTAL
+PINS = {}
+VERSION = _SHIPPED[1:]
 RUNNER = set(re.findall(r'\("(\w+_test\.py)",',
                         io.open("run_all_tests.py", encoding="utf-8").read()))
 
@@ -173,9 +182,29 @@ for loc in ("en", "fa", "zh", "ru"):
           inst > 0 and head > inst,
           "install at %d, test heading at %d" % (inst, head))
 
+    # The pin the README tells you to use when you want to review the installer
+    # before running it as root. It was v1.15.16 while VERSION was 1.15.40: the
+    # safer of the two documented install paths installed 24 releases of old code,
+    # and the sentence under it called the tag a guarantee. Nothing compared this
+    # copy of the version to install.sh:ZEFIRA_PINNED, which the release process
+    # does bump - same disease as the changelog heading that displayed v1.15.38.
+    _tag = _SHIPPED
+    _pin = re.findall(r"/(v[\d.]+)/install\.sh", body)
+    _prose_pin = re.findall(r"`(v[\d.]+)`[^\n]{0,40}pin|`(v[\d.]+)`", body)
+    _seen = set(_pin) | {x for pair in _prose_pin for x in pair if x}
+    check("%s pins the installer at the shipped version" % loc,
+          _seen == {_tag},
+          "pins %s, shipped is %s" % (sorted(_seen), _tag))
+    PINS[loc] = _pin[0] if _pin else None
+
 
 
 # --------------------------------------------------------------------------
+check("all four READMEs pin the same installer tag",
+      len(set(PINS.values())) == 1,
+      "pinned %s" % {k: v for k, v in PINS.items() if v})
+
+
 # Prove each of the new checks fails when the thing it guards is broken.
 #
 # A guard nobody saw fail is a comment with an exit code. Every mutation here
@@ -243,6 +272,16 @@ if os.environ.get("ZEFIRA_README_CHILD") != "1":
            "[FAIL] en names no suite the runner does not run", "README.md",
            lambda t: t.replace("python installer_test.py  ",
                                "python not_a_real_suite_test.py  ", 1))
+    # The stale tag is a constant on purpose - it is the WRONG value, and the
+    # point is to move away from it. The value being moved FROM is derived, so
+    # this proof cannot freeze at one release and then quietly stop applying,
+    # which is exactly what happened to it once.
+    _STALE = "v1.15.16"
+    assert _STALE != _SHIPPED, "the stale tag must differ from the shipped one"
+    _prove("goes red without this fix: a stale installer pin, as shipped",
+           "[FAIL] en pins the installer at the shipped version", "README.md",
+           lambda t: t.replace("/%s/install.sh" % _SHIPPED,
+                               "/%s/install.sh" % _STALE, 1))
     _prove("goes red without this fix: a stale total, as shipped",
            "[FAIL] en states a total equal to the runner's", "README.md",
            lambda t: t.replace("There are %d test suites." % TOTAL,

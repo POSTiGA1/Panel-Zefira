@@ -237,5 +237,43 @@ else:
                 break
     print("node not found: used the structural quote check")
 
+# ---- 7. an inline fallback and its binding must not disagree about a ratio ----
+# docs/security.html carried an inline English fallback for the pentest paragraph
+# AND four data-i18n bindings for the same sentence. The fallback said 117/117 and
+# the bindings said 119/119, so the page read one number before its own script ran
+# and a different one after - and nothing compared the two copies.
+#
+# Scoped to N/N on purpose: that is the shape that drifts. Comparing whole strings
+# flags 61 pairs across the site, almost all of them HTML entities, and a guard
+# that fires on false positives trains people to ignore it.
+_docs_i18n = (HERE / "docs" / "assets" / "i18n.js").read_text(encoding="utf-8")
+_en_cut = _docs_i18n.find('"idx.statPentest"')
+if _en_cut < 0:
+    fail("docs i18n: cannot locate the English block to compare fallbacks against")
+else:
+    import html as _html
+    _en = {}
+    for _m in re.finditer(r'"([\w.]+)"\s*:\s*"((?:[^"\\]|\\.)*)"', _docs_i18n[:_en_cut]):
+        _en[_m.group(1)] = _m.group(2)
+    _RATIO = re.compile(r"\b\d+\s*/\s*\d+\b")
+    _pairs = 0
+    for _page in sorted((HERE / "docs").glob("*.html")):
+        _text = _page.read_text(encoding="utf-8")
+        for _m in re.finditer(r'data-i18n="([\w.]+)"[^>]*>([^<]{1,})<', _text):
+            _key = _m.group(1)
+            _inline = _html.unescape(_m.group(2))
+            _a = _RATIO.findall(_inline)
+            if not _a:
+                continue
+            _pairs += 1
+            _b = _RATIO.findall(_html.unescape(_en.get(_key, "")))
+            if [_x.replace(" ", "") for _x in _b] != [_x.replace(" ", "") for _x in _a]:
+                fail(f"{_page.name} {_key}: the inline fallback says {_a} but the "
+                     f"en binding says {_b or 'no ratio at all'}")
+    if _pairs < 4:
+        fail(f"only {_pairs} inline fallbacks state a pass-ratio; the scan is "
+             f"probably not finding them any more")
+    print(f"pass-ratio fallbacks compared: {_pairs}")
+
 print("i18n checks:", "ALL OK" if not fails else f"{len(fails)} FAILURES")
 sys.exit(1 if fails else 0)
